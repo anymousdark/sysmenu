@@ -2,39 +2,49 @@
 
 Ferramenta tudo-em-um de diagnóstico e otimização do sistema Linux.
 
-**UI em Python** · **Tarefas em Shell** · **Multi-distro**
+**Python UI** · **Shell backend** · **Multi-distro** · **3 abas**
 
-## Funcionalidades
+## Interface
 
 ```
-📊  Diagnóstico e monitoramento
-├── 🔍  Diagnóstico completo (sistema, CPU, RAM, disco, GPU, WiFi, portas, boot, zram)
-├── ⚡  Hardware (CPU, GPU, boot analysis, dispositivos PCI)
+┌──────────────────────────────────────────────┐
+│      🛠  SYS MENU  —  v6.0                     │
+│  [1] 📊 Dash   [2] ⚡ Ações   [3] 📜 Output   │
+└──────────────────────────────────────────────┘
 
-🌐  Rede e WiFi
-├── 📶  WiFi — diagnóstico, DNS (1.1.1.1), power saving, scan
-├── 🌐  Rede — portas abertas, firewall, ping Cloudflare/Google
+┌─ 💻  SISTEMA ────────────────────────┐
+│  CPU   Intel i7-4790 (4 núcleos)     │
+│  Load  0.85 0.62 0.45                │
+│  Uptime 2 hours 15 min               │
+└──────────────────────────────────────┘
+┌─ 📊  RECURSOS ───────────────────────┐
+│  RAM   3.2G/7.7G  ████░░░░░░  42%    │
+│  Disco 27G/47G    ██████░░░░  58%    │
+│  Temp  55.0°C                         │
+└──────────────────────────────────────┘
+┌─ 🌐  REDE · 💾  ARMAZENAMENTO ──────┐
+│  WiFi  -57 dBm  Rede: Familia...     │
+│  Zram  1.9G     Swap: 1 dispositivo  │
+│  Svcs  0        Boot: 17.0s          │
+└──────────────────────────────────────┘
+```
 
-💾  Armazenamento e disco
-├── 💾  Zram — status e ativação
-├── 💽  SMART — saúde do disco + teste rápido
-├── 📁  Espaço — análise de partições, top pastas, lixeira
+## 3 Abas
 
-🧹  Manutenção e limpeza
-├── 🧹  Manutenção geral — update, clean, logs, trim, fix
-├── 🧼  Limpeza profunda — kernels antigos, /tmp, cache
-├── 🔄  Gestão de serviços — start/stop/restart, enable/disable
-├── 🏁  Auto-Pilot — tudo automático (update + clean + zram + DNS + ...)
+| Aba | Descrição |
+|-----|-----------|
+| **1** 📊 **Dashboard** | Visão geral com métricas em tempo real (CPU, RAM, disco, WiFi, zram, boot) |
+| **2** ⚡ **Ações** | Todas as ferramentas: diagnóstico, rede, SMART, manutenção, segurança, extras |
+| **3** 📜 **Output** | Output do último comando executado (fixo, sempre disponível) |
 
-🔒  Segurança e utilizadores
-├── 🔐  Segurança — SSH falhados, sudo audit, portas suspeitas, logins
-├── 👥  Utilizadores — quem está logado, últimos logins, reboots
+## Ações disponíveis
 
-🐳  Extras
-├── 🐳  Docker — containers ativos, imagens, limpeza
-├── 📦  Flatpak — apps instaladas, updates
-
-📋  Exportar — diagnóstico completo para .txt
+```
+📊  Diagnóstico completo     🌐  WiFi + Rede (DNS, power save)
+💾  Zram / SMART / Espaço    🧹  Manutenção (update, clean, trim)
+🔒  Segurança + Utilizadores 🐳  Docker / Flatpak
+🔄  Serviços (start/stop)    🏁  Auto-Pilot (tudo automático)
+📋  Exportar diagnóstico
 ```
 
 ## Instalação
@@ -45,48 +55,24 @@ cd sysmenu
 ./sysmenu
 ```
 
-Ou instalação global:
+O script pergunta se queres instalar globalmente na primeira execução.  
+Ou manualmente:
 
 ```bash
 sudo cp sysmenu /usr/local/bin/
 sysmenu
 ```
 
-## Suporte a distribuições
+## Distribuições suportadas
 
-| Distro | Package Manager | Serviços | Testado |
-|--------|----------------|----------|---------|
-| Debian / Ubuntu / Pop!_OS / Mint | `apt-get` | systemd | ✅ |
-| Fedora / RHEL / CentOS | `dnf` | systemd | ✅ |
-| Arch Linux / Manjaro / Endeavour | `pacman` | systemd | ✅ |
-| openSUSE Tumbleweed / Leap | `zypper` | systemd | ✅ |
-| Void Linux | `xbps-install` | runit | ✅ |
+Debian/Ubuntu, Fedora, Arch, openSUSE, Void — deteção automática do gestor de pacotes.
 
-## Dependências (opcionais)
+## Dependências opcionais
 
-| Ferramenta | Para quê |
-|-----------|----------|
-| `smartmontools` | Leitura SMART do disco (instala automático se faltar) |
-| `lm-sensors` | Temperaturas do sistema |
-| `nvidia-smi` | Info detalhada da GPU NVIDIA |
-| `iw`, `nmcli` | Gestão WiFi |
-| `docker` | Gestão de contentores |
-| `flatpak` | Gestão de aplicações Flatpak |
-
-O script auto-eleva-se para root via `sudo` quando necessário.
-
-## Estrutura
-
-```
-sysmenu/
-├── sysmenu       # Script principal (Python + Shell)
-├── install.sh    # Instalador global
-├── README.md
-├── LICENSE       # MIT
-└── .gitignore
-```
-
-O `sysmenu` é um script Python que usa `subprocess` para executar comandos shell. Toda a lógica de sistema fica em chamadas shell bem definidas, enquanto o Python gere a UI, navegação e deteção de distribuição.
+- `smartmontools` — saúde do disco
+- `lm-sensors` — temperaturas
+- `nvidia-smi` — GPU NVIDIA
+- `iw`, `nmcli` — WiFi
 
 ## License
 

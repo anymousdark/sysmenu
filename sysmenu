@@ -1,690 +1,547 @@
 #!/usr/bin/env python3
 """
-🛠  Sys Menu — v5.0
-Diagnóstico + otimização do sistema multi-distro
+🛠  Sys Menu — v6.0
+3 abas: Dashboard · Ações · Output
 https://github.com/anymousdark/sysmenu
 """
 
-import os, sys, subprocess, shutil, time, stat
+import os, sys, subprocess, shutil, time, re
 from dataclasses import dataclass
 from typing import Optional
 
-# ── Core ─────────────────────────────────────
 C = {
     'r': '\033[1;31m', 'g': '\033[1;32m', 'y': '\033[1;33m',
     'b': '\033[1;34m', 'c': '\033[1;36m', 'm': '\033[1;35m',
-    'n': '\033[0m', 'B': '\033[1m', 'd': '\033[2m',
+    'n': '\033[0m', 'B': '\033[1m', 'd': '\033[2m', 'i': '\033[3m',
+    'bl': '\033[5m', 'w': '\033[1;37m',
+    'R': '\033[41m', 'G': '\033[42m', 'Y': '\033[43m',
 }
-
 USER_HOME = os.path.expanduser("~")
-WIFI_IFACE = ""
-SSID = ""
-DISK = "/dev/sda"
 
-# ── Distro detection ─────────────────────────
+# ── Distro ───────────────────────────────────
 @dataclass
 class Distro:
-    id: str
-    name: str
-    pkg: str
-    pkg_install: str
-    pkg_update: str
-    pkg_upgrade: str
-    pkg_clean: str
-    pkg_search: str
-    svc_cmd: str
-
+    id: str; name: str; pkg: str
+    pi: str; pu: str; pup: str; pc: str; sc: str
 DISTROS = {
-    'debian': Distro('debian', 'Debian/Ubuntu', 'apt-get',
-        'apt-get install -y', 'apt-get update -qq',
-        'apt-get upgrade -y', 'apt-get autoclean -y && apt-get autoremove -y',
-        'apt-cache search', 'systemctl'),
-    'ubuntu': Distro('ubuntu', 'Ubuntu', 'apt-get',
-        'apt-get install -y', 'apt-get update -qq',
-        'apt-get upgrade -y', 'apt-get autoclean -y && apt-get autoremove -y',
-        'apt-cache search', 'systemctl'),
-    'fedora': Distro('fedora', 'Fedora', 'dnf',
-        'dnf install -y', 'dnf check-update -q',
-        'dnf upgrade -y', 'dnf autoremove -y',
-        'dnf search', 'systemctl'),
-    'rhel': Distro('rhel', 'RHEL/CentOS', 'dnf',
-        'dnf install -y', 'dnf check-update -q',
-        'dnf upgrade -y', 'dnf autoremove -y',
-        'dnf search', 'systemctl'),
-    'arch': Distro('arch', 'Arch Linux', 'pacman',
-        'pacman -S --noconfirm', 'pacman -Sy',
-        'pacman -Su --noconfirm', 'pacman -Sc --noconfirm',
-        'pacman -Ss', 'systemctl'),
-    'opensuse': Distro('opensuse', 'openSUSE', 'zypper',
-        'zypper install -y', 'zypper refresh',
-        'zypper update -y', 'zypper clean',
-        'zypper search', 'systemctl'),
-    'void': Distro('void', 'Void Linux', 'xbps-install',
-        'xbps-install -y', 'xbps-install -S',
-        'xbps-install -yu', 'xbps-remove -O',
-        'xbps-query -Rs', 'runit'),
+    'debian':  Distro('debian','Debian/Ubuntu','apt-get','apt-get install -y','apt-get update -qq','apt-get upgrade -y','apt-get autoclean -y && apt-get autoremove -y','systemctl'),
+    'fedora':  Distro('fedora','Fedora','dnf','dnf install -y','dnf check-update -q','dnf upgrade -y','dnf autoremove -y','systemctl'),
+    'arch':    Distro('arch','Arch Linux','pacman','pacman -S --noconfirm','pacman -Sy','pacman -Su --noconfirm','pacman -Sc --noconfirm','systemctl'),
+    'opensuse':Distro('opensuse','openSUSE','zypper','zypper install -y','zypper refresh','zypper update -y','zypper clean','systemctl'),
+    'void':    Distro('void','Void Linux','xbps-install','xbps-install -y','xbps-install -S','xbps-install -yu','xbps-remove -O','runit'),
 }
-
-def detect_distro() -> Distro:
+def detect_distro():
     try:
-        with open('/etc/os-release') as f:
-            data = f.read()
-        for key in DISTROS:
-            if f'ID={key}' in data or f'ID_LIKE={key}' in data:
-                return DISTROS[key]
-        if 'ID=debian' in data:
-            return DISTROS['debian']
-    except:
-        pass
-    # Fallback
-    for pkgmgr, dist in [('apt-get', 'debian'), ('dnf', 'fedora'),
-                           ('pacman', 'arch'), ('zypper', 'opensuse')]:
-        if shutil.which(pkgmgr):
-            return DISTROS[dist]
+        d = open('/etc/os-release').read()
+        for k in DISTROS:
+            if f'ID={k}' in d or f'ID_LIKE={k}' in d:
+                return DISTROS[k]
+    except: pass
+    for p,d in [('apt-get','debian'),('dnf','fedora'),('pacman','arch'),('zypper','opensuse')]:
+        if shutil.which(p): return DISTROS[d]
     return DISTROS['debian']
 
-DISTRO = detect_distro()
+D = detect_distro()
+WIFI = ""; SSID = ""; DISK = "/dev/sda"
+LAST_OUTPUT = ""
+TAB = 1  # 1=Dashboard, 2=Ações, 3=Output
 
-# ── Helpers ──────────────────────────────────
-def has(cmd: str) -> bool:
-    return shutil.which(cmd) is not None
+# ── Core ─────────────────────────────────────
+def has(c): return shutil.which(c) is not None
 
-def run(cmd: str, as_root: bool = False, timeout: int = 120) -> str:
-    if as_root and os.geteuid() != 0:
-        cmd = f"sudo sh -c '{cmd}'"
+def run(cmd, root=False, t=120):
+    if root and os.geteuid()!=0: cmd = f"sudo sh -c '{cmd}'"
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=t)
         return r.stdout + r.stderr
-    except:
-        return ""
+    except: return ""
 
-def run_live(cmd: str, as_root: bool = False):
-    """Run command showing real-time output (for updates, long tasks)"""
-    if as_root and os.geteuid() != 0:
-        cmd = f"sudo sh -c '{cmd}'"
+def run_live(cmd, root=False):
+    if root and os.geteuid()!=0: cmd = f"sudo sh -c '{cmd}'"
     try:
-        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        for line in proc.stdout:
-            print(f"  {line}", end='', flush=True)
-        proc.wait()
-    except:
-        pass
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for l in p.stdout: print(f"  {l}", end='', flush=True)
+        p.wait()
+    except: pass
 
-def pick(options: list, title: str = "") -> Optional[str]:
-    """Simple picker with stdin input"""
-    print(f"\n  {title}" if title else "")
-    for i, (key, label) in enumerate(options, 1):
-        print(f"    {C['g']}{i:2d}{C['n']})  {label}")
+def pick(opts, title=""):
+    print(f"\n  {title}")
+    for i,(k,l) in enumerate(opts,1): print(f"    {C['g']}{i:2d}{C['n']})  {l}")
     print(f"    {C['r']} 0{C['n']})  Voltar")
     try:
-        choice = input(f"\n  {C['B']}Opção:{C['n']} ").strip()
-        idx = int(choice) - 1
-        if 0 <= idx < len(options):
-            return options[idx][0]
-    except:
-        pass
+        c = int(input(f"\n  {C['B']}»{C['n']} ").strip())-1
+        if 0<=c<len(opts): return opts[c][0]
+    except: pass
     return None
 
-def confirm(msg: str) -> bool:
-    resp = input(f"\n  {C['y']}?{C['n']} {msg} (s/N): ").strip().lower()
-    return resp in ('s', 'y', 'sim', 'yes')
+def confirm(m):
+    return input(f"\n  {C['y']}?{C['n']} {m} (s/N): ").strip().lower() in ('s','y')
 
-def show(title: str, content: str):
-    """Display content with paging if long"""
-    lines = content.strip().split('\n')
-    print(f"\n  {C['c']}── {title} {'─' * (60 - len(title))}{C['n']}")
-    for line in lines:
-        print(f"  {line}")
-    if len(lines) > 20:
-        input(f"\n  {C['d']}Prima Enter para continuar...{C['n']}")
-    else:
-        print()
-
-def section(name: str) -> str:
-    return f"{'─'*4}  {name}"
-
-def header(title: str):
-    os.system('clear')
-    print(f"\n  {C['c']}┌──────────────────────────────────────────────┐{C['n']}")
-    print(f"  {C['c']}│{C['n']}          {C['B']}{title}{C['n']}                   {C['c']}│{C['n']}")
-    print(f"  {C['c']}└──────────────────────────────────────────────┘{C['n']}")
-    print(f"  {C['d']}Distro: {DISTRO.name}  |  Kernel: {os.uname().release}{C['n']}\n")
-
-# ── Backend shell wrappers ───────────────────
 def detect_hw():
-    global WIFI_IFACE, SSID, DISK
-    out = run("iw dev 2>/dev/null | awk '/Interface/{print $2}'")
-    WIFI_IFACE = out.strip()
-    out = run("nmcli -t -f NAME con show --active 2>/dev/null | head -1")
-    SSID = out.strip()
+    global WIFI, SSID, DISK
+    WIFI = run("iw dev 2>/dev/null | awk '/Interface/{print $2}'").strip()
+    SSID = run("nmcli -t -f NAME con show --active 2>/dev/null | head -1").strip()
     if not os.path.exists(DISK):
-        disk = run("lsblk -ndo NAME 2>/dev/null | head -1").strip()
-        if disk:
-            DISK = f"/dev/{disk}"
+        d = run("lsblk -ndo NAME 2>/dev/null | head -1").strip()
+        if d: DISK = f"/dev/{d}"
 
-def cmd_diag() -> str:
-    out = f"{section('SISTEMA')}\n"
-    out += f"Hostname : {run('hostname').strip()}\n"
-    out += f"Kernel   : {os.uname().release}\n"
-    out += f"OS       : {run('grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d \"\\\"\"').strip()}\n"
-    out += f"Uptime   : {run('uptime -p 2>/dev/null | sed \"s/up //\"').strip()}\n"
-    out += f"Load     : {run('cat /proc/loadavg 2>/dev/null | cut -d\" \" -f1-3').strip()}\n\n"
-    out += f"{section('CPU')}\n"
-    out += run("grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2").strip() + "\n"
-    out += f"Núcleos  : {run('grep -c ^processor /proc/cpuinfo 2>/dev/null').strip()}\n\n"
-    out += f"{section('MEMÓRIA')}\n"
-    out += run("free -h | awk 'NR==1{printf \"%-8s %8s %8s %8s\\n\",$1,$2,$3,$4} NR==2{printf \"%-8s %8s %8s %8s\\n\",$1,$2,$3,$4}'").strip() + "\n\n"
-    out += f"{section('DISCO')}\n"
-    out += run("df -h / 2>/dev/null | awk 'NR==2{printf \"%s — %s de %s (%s livres)\\n\",$1,$3,$2,$4}'").strip() + "\n\n"
-    out += f"{section('TEMPERATURAS')}\n"
-    out += run("sensors 2>/dev/null | grep -E 'Core|Package|temp1|Composite|Tctl|edge' | head -5").strip() + "\n\n"
-    out += f"{section('GPU')}\n"
-    if has('nvidia-smi'):
-        out += run("nvidia-smi --query-gpu=name,temperature.gpu --format=csv,noheader 2>/dev/null")
-    else:
-        out += run("lspci 2>/dev/null | grep -iE 'vga|3d|display' | cut -d: -f3-").strip() + "\n"
-    out += f"\n{section('WIFI')}\n"
-    out += (run(f"iw dev {WIFI_IFACE} link 2>/dev/null") if WIFI_IFACE else "(sem WiFi)\n") + "\n"
-    out += f"{section('PORTAS')}\n"
-    out += run("ss -tlnp 2>/dev/null | awk 'NR>1{print $5, $1}' | head -12").strip() + "\n\n"
-    out += f"{section('SERVIÇOS COM FALHA')}\n"
-    out += run("systemctl --failed 2>/dev/null | grep 'loaded failed' || echo 'Nenhum'").strip() + "\n\n"
-    out += f"{section('ZRAM')}\n"
-    out += run("zramctl 2>/dev/null || echo 'Inativo'").strip() + "\n\n"
-    out += f"{section('BOOT')}\n"
-    out += run("systemd-analyze 2>/dev/null").strip() + "\n"
-    return out
+def set_output(o):
+    global LAST_OUTPUT
+    LAST_OUTPUT = o
 
-def cmd_hardware() -> str:
-    out = f"{section('CPU')}\n"
-    out += run("grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2").strip() + "\n"
-    out += f"Núcleos: {run('grep -c ^processor /proc/cpuinfo 2>/dev/null').strip()}\n"
-    out += run("lscpu 2>/dev/null | grep -E 'CPU max MHz|CPU min MHz|Architecture'").strip() + "\n\n"
-    out += f"{section('GPU')}\n"
-    if has('nvidia-smi'):
-        out += run("nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv,noheader 2>/dev/null")
-    else:
-        out += run("lspci 2>/dev/null | grep -iE 'vga|3d|display' | cut -d: -f3-").strip() + "\n"
-    out += f"\n{section('BOOT')}\n"
-    out += run("systemd-analyze 2>/dev/null").strip() + "\n"
-    out += run("systemd-analyze blame 2>/dev/null | head -8").strip() + "\n"
-    out += f"\n{section('DISPOSITIVOS')}\n"
-    out += run("lspci 2>/dev/null | grep -iE 'network|ethernet|wireless|audio|nvme|sata' | head -8").strip()
-    return out
+def show_output(out):
+    print(out[:2500])
+    if len(out) > 2500:
+        print(f"\n  {C['d']}... (output truncado, ver aba 3 para completo){C['n']}")
+    print(f"\n  {C['d']}[Enter] Continuar  |  [3] Ver output completo{C['n']}")
+    try:
+        c = input(f"\n  {C['B']}»{C['n']} ").strip()
+        if c == '3':
+            global TAB; TAB = 3; output_view()
+    except: pass
 
-def cmd_wifi_info() -> str:
-    if not WIFI_IFACE:
-        return "Sem interface WiFi"
-    out = run(f"iw dev {WIFI_IFACE} link 2>/dev/null").strip() + "\n"
-    out += run(f"iw dev {WIFI_IFACE} station dump 2>/dev/null | grep -E 'signal:|bitrate:|retries:|connected time:'").strip()
-    return out
+def clear(): os.system('clear')
 
-def cmd_wifi_dns():
-    if SSID:
-        run(f"nmcli con mod \"{SSID}\" ipv4.dns '1.1.1.1 8.8.8.8'")
-        run(f"nmcli con down \"{SSID}\" 2>/dev/null && nmcli con up \"{SSID}\" 2>/dev/null")
-        return True
-    return False
+# ── Header / Tabs ────────────────────────────
+def header():
+    clear()
+    tab1 = f"{C['w']}{C['G']} 1  📊 Dash {C['n']}" if TAB==1 else f"  1  📊 Dash "
+    tab2 = f"{C['w']}{C['G']} 2  ⚡  Ações {C['n']}" if TAB==2 else f"  2  ⚡  Ações "
+    tab3 = f"{C['w']}{C['G']} 3  📜 Output {C['n']}" if TAB==3 else f"  3  📜 Output "
+    print(f"  {C['c']}┌──────────────────────────────────────────────┐{C['n']}")
+    print(f"  {C['c']}│{C['n']}        {C['B']}🛠  SYS MENU  —  v6.0{C['n']}                  {C['c']}│{C['n']}")
+    print(f"  {C['c']}│{C['n']}  {tab1}  {tab2}  {tab3}  {C['c']}│{C['n']}")
+    print(f"  {C['c']}└──────────────────────────────────────────────┘{C['n']}")
+    print(f"  {C['d']}{D.name}  ·  {os.uname().release}  ·  {time.strftime('%H:%M:%S')}{C['n']}")
 
-def cmd_wifi_powersave():
-    if WIFI_IFACE:
-        run(f"iw dev {WIFI_IFACE} set power_save off", as_root=True)
-        return True
-    return False
+# ── Tab 1: Dashboard ─────────────────────────
+def dashboard():
+    header()
+    # CPU
+    cpu = run("grep -m1 'model name' /proc/cpuinfo | cut -d: -f2").strip()[:50]
+    cores = run("grep -c ^processor /proc/cpuinfo").strip()
+    load = run("cat /proc/loadavg | cut -d' ' -f1-3").strip()
 
-def cmd_zram_status() -> str:
-    return run("zramctl 2>/dev/null; echo ''; swapon --show 2>/dev/null").strip()
+    # Mem
+    mem = run("free -h | awk 'NR==2{print $3\"/\"$2}'").strip()
+    mem_pct = run("free | awk 'NR==2{printf \"%.0f\", $3/$2*100}'").strip()
 
-def cmd_zram_activate():
-    if DISTRO.svc_cmd == 'systemctl':
-        run("systemctl start dev-zram0.swap", as_root=True)
-    return 'zram' in run("zramctl 2>/dev/null")
+    # Disk
+    disk_u = run("df -h / | awk 'NR==2{print $3}'").strip()
+    disk_t = run("df -h / | awk 'NR==2{print $2}'").strip()
+    disk_p = run("df -h / | awk 'NR==2{print $5}'").strip()
 
-def cmd_smart() -> str:
-    model = run(f"smartctl -i {DISK} 2>/dev/null | grep 'Device Model' | cut -d: -f2 | xargs").strip()
-    health = run(f"smartctl -H {DISK} 2>/dev/null | grep 'SMART overall-health' | cut -d: -f2 | xargs").strip()
-    temp = run(f"smartctl -A {DISK} 2>/dev/null | awk '/Temperature_Celsius/{{print $10}}'").strip()
-    attr = run(f"smartctl -A {DISK} 2>/dev/null | sed -n '8,25p'").strip()
-    return f"Modelo: {model}\nSaúde: {health}\nTemperatura: {temp or 'N/A'}°C\n\nSMART:\n{attr}"
+    # Temp
+    temp = run("sensors 2>/dev/null | grep -m1 'Package id 0' | awk '{print $4}' | tr -d '+' || echo '—'").strip()
+    uptime = run("uptime -p | sed 's/up //'").strip()
 
-def cmd_smart_test():
-    run(f"smartctl -t short {DISK}", as_root=True)
+    # WiFi
+    wifi_s = ""
+    if WIFI:
+        s = run(f"iw dev {WIFI} station dump 2>/dev/null | awk '/signal:/{{print $2}}'").strip()
+        wifi_s = f"{s} dBm" if s else "—"
 
-def cmd_rede() -> str:
-    out = f"{section('INTERFACES')}\n"
-    out += run("ip -br addr 2>/dev/null | grep -v lo").strip() + "\n\n"
-    out += f"{section('PORTAS')}\n"
-    out += run("ss -tlnp 2>/dev/null | awk 'NR>1{split($5,a,\":\"); print a[length(a)]}' | sort -n | uniq | head -20").strip() + "\n\n"
-    out += f"{section('FIREWALL')}\n"
-    if has('ufw'):
-        out += run("ufw status 2>/dev/null | head -5")
-    elif has('iptables'):
-        out += run("iptables -L -n --line-numbers 2>/dev/null | head -8")
-    else:
-        out += "Nenhum firewall detetado\n"
-    out += f"\n{section('DNS')}\n"
-    out += run("resolvectl status 2>/dev/null | grep 'DNS Servers' | head -1").strip() + "\n"
-    out += f"\n{section('PING')}\n"
-    out += run("ping -c 2 -W 2 1.1.1.1 2>/dev/null | awk '/rtt/{print \"Cloudflare: \" $4}' | cut -d/ -f1").strip() + "\n"
-    out += run("ping -c 2 -W 2 8.8.8.8 2>/dev/null | awk '/rtt/{print \"Google: \" $4}' | cut -d/ -f1").strip()
-    return out
+    # Services failed
+    failed = run("systemctl --failed 2>/dev/null | grep -c 'loaded failed' || echo 0").strip()
+    failed_s = f"{C['r']}{failed} falha(s){C['n']}" if failed!='0' else f"{C['g']}0{C['n']}"
 
-def cmd_espaco() -> str:
-    out = f"{section('PARTIÇÕES')}\n"
-    out += run("df -h 2>/dev/null | grep -v tmpfs | grep -v udev").strip() + "\n\n"
-    out += f"{section('TOP 15 PASTAS')}\n"
-    out += run(f"du -sh {USER_HOME}/* --exclude=.cache 2>/dev/null | sort -rh | head -15").strip() + "\n\n"
-    trash = run(f"du -sh {USER_HOME}/.local/share/Trash 2>/dev/null | awk '{{print $1}}'").strip()
-    cache = run(f"du -sh {USER_HOME}/.cache 2>/dev/null | awk '{{print $1}}'").strip()
-    out += f"Lixeira: {trash or '0B'}  |  Cache: {cache or '0B'}\n"
-    return out
+    # Zram
+    zram_s = run("zramctl 2>/dev/null | awk 'NR>1{print $4}'").strip() or "Inativo"
 
-def cmd_update():
-    run(DISTRO.pkg_update, as_root=True)
-    run(DISTRO.pkg_upgrade, as_root=True, timeout=300)
+    # Box drawing
+    def box(title, *lines):
+        w = 52
+        print(f"  ┌─ {C['B']}{title}{C['n']} {'─'*(w-len(title)-4)}┐")
+        for l in lines: print(f"  │ {l}{' '*(w-len(str(l))-2)}│")
+        print(f"  └{'─'*w}┘")
 
-def cmd_clean():
-    run(DISTRO.pkg_clean, as_root=True)
+    box("💻  SISTEMA",
+        f"  {C['d']}CPU   {C['n']}{cpu} ({cores} núcleos)",
+        f"  {C['d']}Load  {C['n']}{load}",
+        f"  {C['d']}Uptime{C['n']}  {uptime}")
 
-def cmd_seguranca() -> str:
-    out = f"{section('SSH FALHADOS')}\n"
-    out += run("journalctl -u sshd -n 20 --no-pager 2>/dev/null | grep -i 'failed\\|invalid' | tail -10").strip() or "(sem registos)\n"
-    out += f"\n{section('COMANDOS SUDO')}\n"
-    out += run("journalctl -u sudo -n 15 --no-pager 2>/dev/null | tail -10").strip() or "(sem registos)\n"
-    out += f"\n{section('PORTAS >10000')}\n"
-    out += run("ss -tupn 2>/dev/null | awk 'NR>1 && $1~/tcp/{split($5,a,\":\"); port=a[length(a)]; if(port+0>10000) print port}' | head -15").strip() or "(nenhuma)\n"
-    out += f"\n{section('ÚLTIMOS LOGINS')}\n"
-    out += run("last -10 2>/dev/null | head -10").strip()
-    return out
+    box("📊  RECURSOS",
+        f"  {C['d']}RAM   {C['n']}{mem}  {barra(mem_pct)} {mem_pct}%",
+        f"  {C['d']}Disco {C['n']}{disk_u}/{disk_t}  {barra(disk_p.replace('%',''))} {disk_p}",
+        f"  {C['d']}Temp  {C['n']}{temp}")
 
-def cmd_utilizadores() -> str:
-    out = f"{section('LOGADOS')}\n"
-    out += run("w -h 2>/dev/null").strip() or "(n/a)\n"
-    out += f"\n{section('ÚLTIMOS LOGINS')}\n"
-    out += run("last -20 2>/dev/null | head -20").strip() or "(n/a)\n"
-    out += f"\n{section('REBOOTS')}\n"
-    out += run("last reboot -10 2>/dev/null").strip() or "(n/a)\n"
-    return out
+    boot_t = run("systemd-analyze 2>/dev/null | awk '/userspace/{print $NF}' | tr -d 's' || echo '—'").strip()
+    box("🌐  REDE  ·  💾  ARMAZENAMENTO",
+        f"  {C['d']}WiFi  {C['n']}{wifi_s or '—'}    {'  ' if WIFI else ''}{C['d']}Rede:{C['n']} {SSID or '—'}",
+        f"  {C['d']}Zram  {C['n']}{zram_s}     {C['d']}Swap:{C['n']} {run('swapon --show 2>/dev/null | wc -l').strip()} dispositivos",
+        f"  {C['d']}Svcs  {C['n']}{failed_s}                {C['d']}Boot:{C['n']} {boot_t}s")
 
-def cmd_docker() -> str:
-    if not has('docker'):
-        return ""
-    out = f"{section('DOCKER')}\n"
-    out += f"Ativos: {run('docker ps -q 2>/dev/null | wc -l').strip()}\n"
-    out += f"Total:  {run('docker ps -aq 2>/dev/null | wc -l').strip()}\n"
-    out += f"Imagens: {run('docker images -q 2>/dev/null | wc -l').strip()}\n"
-    if int(run('docker ps -q 2>/dev/null | wc -l').strip() or '0') > 0:
-        out += run("docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' 2>/dev/null").strip() + "\n"
-    return out
+    print(f"\n  {C['d']}Pressiona 2 para ir às ações, 3 para ver output, 0 para sair{C['n']}\n")
+    navegar()
 
-def cmd_flatpak() -> str:
-    if not has('flatpak'):
-        return ""
-    out = f"{section('FLATPAK')}\n"
-    out += run("flatpak list --app 2>/dev/null | awk '{print \"  \" $1}'").strip() + "\n"
-    out += f"Updates: {run('flatpak remote-ls --updates 2>/dev/null | wc -l').strip()}\n"
-    return out
+def barra(p):
+    try: p=int(float(p))
+    except: return ""
+    n = p//10
+    c = C['g'] if p<50 else C['y'] if p<80 else C['r']
+    return f"{c}{'█'*n}{'░'*(10-n)}{C['n']}"
 
-def cmd_kernels_cleanup():
-    current = run("uname -r | sed 's/-[a-z].*//'").strip()
-    if DISTRO.id in ('debian', 'ubuntu'):
-        run(f"dpkg -l linux-image-* 2>/dev/null | awk '/^ii/{{print $2}}' | grep -v '{current}' | tail -n +3 | xargs -r apt-get purge -y", as_root=True, timeout=180)
-        run("update-grub 2>/dev/null", as_root=True)
-    elif DISTRO.id == 'arch':
-        run("pacman -Qdtq 2>/dev/null | xargs -r pacman -Rns --noconfirm", as_root=True)
-    elif DISTRO.id in ('fedora', 'rhel'):
-        run("dnf remove --oldinstallonly --setopt installonly_limit=2 -y", as_root=True)
-
-# ── UI modules ───────────────────────────────
-def module_diag():
-    header("📊 Diagnóstico")
-    show("Resultado", cmd_diag())
-
-def module_hardware():
-    header("⚡ Hardware")
-    show("Hardware", cmd_hardware())
-
-def module_wifi():
-    if not WIFI_IFACE:
-        input(f"  {C['r']}Sem interface WiFi{C['n']}\n  Enter...")
-        return
+# ── Tab 2: Ações ─────────────────────────────
+def acoes():
     while True:
-        header("📶 WiFi")
-        print(f"  {C['d']}{cmd_wifi_info()}{C['n']}\n")
-        opt = pick([
-            ('dns', "DNS → Cloudflare/Google"),
-            ('ps', "Desligar power saving"),
-            ('scan', "Scan de redes"),
-        ], "Otimização")
-        if opt == 'dns':
-            cmd_wifi_dns()
-            print(f"\n  {C['g']}✅ DNS alterado{C['n']}")
-        elif opt == 'ps':
-            cmd_wifi_powersave()
-            print(f"\n  {C['g']}✅ Power saving OFF{C['n']}")
-        elif opt == 'scan':
-            run("nmcli dev wifi rescan 2>/dev/null")
-            print(f"  {C['g']}Scan concluído{C['n']}")
-        else:
-            break
-        time.sleep(1)
+        header()
+        print(f"  {C['B']}⚡  AÇÕES{C['n']}\n")
+        cat = pick([
+            ('1',"📊  Diagnóstico completo"),
+            ('2',"🌐  WiFi + Rede"),
+            ('3',"💾  Zram + Disco (SMART)"),
+            ('4',"🧹  Manutenção + Limpeza"),
+            ('5',"🔒  Segurança + Utilizadores"),
+            ('6',"🐳  Docker / Flatpak"),
+            ('7',"🔄  Serviços (start/stop)"),
+            ('8',"🏁  Auto-Pilot"),
+            ('9',"📋  Exportar diagnóstico"),
+        ], "Categoria:")
+        if not cat: break
+        {
+            '1': acao_diag,
+            '2': acao_rede,
+            '3': acao_armazenamento,
+            '4': acao_manutencao,
+            '5': acao_seguranca,
+            '6': acao_extras,
+            '7': acao_servicos,
+            '8': acao_autopilot,
+            '9': acao_exportar,
+        }.get(cat, lambda: None)()
 
-def module_zram():
-    header("💾 Zram")
-    status = cmd_zram_status()
-    if 'zram' in status:
-        show("Status", status)
-    elif confirm("Zram inativo. Ativar?"):
-        if cmd_zram_activate():
-            print(f"  {C['g']}✅ Zram ativado{C['n']}")
-            show("Status", cmd_zram_status())
-        else:
-            print(f"  {C['r']}❌ Falha (systemd-zram-generator instalado?){C['n']}")
-
-def module_smart():
-    header("💽 Disco")
-    show("SMART", cmd_smart())
-    if confirm("Executar teste rápido (short)?"):
-        cmd_smart_test()
-        print(f"\n  {C['g']}✅ Teste iniciado! Verifique com: smartctl -l selftest {DISK}{C['n']}")
-
-def module_rede():
-    header("🌐 Rede")
-    show("Diagnóstico", cmd_rede())
-
-def module_espaco():
-    header("📁 Espaço")
-    show("Análise", cmd_espaco())
-    if confirm("Esvaziar lixeira?"):
-        run(f"rm -rf {USER_HOME}/.local/share/Trash/* 2>/dev/null")
-        print(f"  {C['g']}✅ Lixeira vazia{C['n']}")
-
-def module_manutencao():
-    while True:
-        header("🧹 Manutenção")
-        opt = pick([
-            ('up', "Atualizar pacotes"),
-            ('clean', "Limpar cache do gestor de pacotes"),
-            ('journal', "Limpar logs do journal"),
-            ('trim', "TRIM no SSD"),
-            ('fix', "Corrigir pacotes quebrados"),
-        ], "Operações")
-        if opt == 'up':
-            print(f"\n  {C['y']}A atualizar...{C['n']}\n")
-            run_live(f"{DISTRO.pkg_update} && {DISTRO.pkg_upgrade}", as_root=True)
-            print(f"\n  {C['g']}✅ Concluído{C['n']}")
-        elif opt == 'clean':
-            print(f"\n  {C['y']}A limpar...{C['n']}\n")
-            run_live(DISTRO.pkg_clean, as_root=True)
-            print(f"\n  {C['g']}✅ Limpeza concluída{C['n']}")
-        elif opt == 'journal':
-            print(f"\n  {C['y']}A limpar logs...{C['n']}\n")
-            run_live("journalctl --vacuum-size=100M 2>&1", as_root=True)
-            print(f"\n  {C['g']}✅ Logs limpos (100MB){C['n']}")
-        elif opt == 'trim':
-            print(f"\n  {C['y']}A executar TRIM...{C['n']}\n")
-            run_live("fstrim -v / 2>&1", as_root=True)
-            print(f"\n  {C['g']}✅ TRIM executado{C['n']}")
-        elif opt == 'fix':
-            fix_cmd = "apt-get install --fix-broken -y" if DISTRO.pkg == 'apt-get' else "dnf check --fix"
-            print(f"\n  {C['y']}A corrigir...{C['n']}\n")
-            run_live(fix_cmd, as_root=True)
-            print(f"\n  {C['g']}✅ Corrigido{C['n']}")
-        else:
-            break
-        time.sleep(1.5)
-
-def module_limpeza():
-    while True:
-        header("🧼 Limpeza profunda")
-        opt = pick([
-            ('kernels', "Remover kernels antigos"),
-            ('tmp', "Limpar /tmp e /var/tmp"),
-            ('cache', "Limpar cache do apt/pacman/dnf"),
-            ('homecache', "Limpar ~/.cache"),
-            ('logs', "Limpar logs >7 dias"),
-            ('trash', "Esvaziar lixeira"),
-        ], "Operações")
-        if opt == 'kernels':
-            print(f"\n  {C['y']}A remover kernels antigos...{C['n']}\n")
-            cmd_kernels_cleanup()
-            print(f"\n  {C['g']}✅ Removidos{C['n']}")
-        elif opt == 'tmp':
-            run("rm -rf /tmp/* /var/tmp/* 2>/dev/null", as_root=True)
-            print(f"\n  {C['g']}✅ Limpos{C['n']}")
-        elif opt == 'cache':
-            run_live(f"{DISTRO.pkg_clean.split('&&')[0]} clean", as_root=True)
-            print(f"\n  {C['g']}✅ Cache limpo{C['n']}")
-        elif opt == 'homecache':
-            run(f"rm -rf {USER_HOME}/.cache/* 2>/dev/null")
-            print(f"\n  {C['g']}✅ ~/.cache limpo{C['n']}")
-        elif opt == 'logs':
-            run_live("journalctl --vacuum-time=7d", as_root=True)
-            print(f"\n  {C['g']}✅ Logs >7d removidos{C['n']}")
-        elif opt == 'trash':
-            run(f"rm -rf {USER_HOME}/.local/share/Trash/* 2>/dev/null")
-            print(f"\n  {C['g']}✅ Lixeira vazia{C['n']}")
-        else:
-            break
-        time.sleep(1.5)
-
-def module_seguranca():
-    header("🔐 Segurança")
-    show("Auditoria", cmd_seguranca())
-
-def module_utilizadores():
-    header("👥 Utilizadores")
-    show("Informação", cmd_utilizadores())
-
-def module_contentores():
-    header("🐳 Contentores")
-    out = cmd_docker() + cmd_flatpak()
-    if not out.strip():
-        out = "Nenhum contentor ou Flatpak detetado."
-    show("Informação", out)
-    if has('flatpak') and confirm("Atualizar flatpaks?"):
-        run("flatpak update -y", timeout=300)
-        print(f"  {C['g']}✅ Flatpaks atualizados{C['n']}")
-    if has('docker') and confirm("Limpar contentores parados/imagens não usadas?"):
-        run("docker container prune -f && docker image prune -f")
-        print(f"  {C['g']}✅ Docker limpo{C['n']}")
-
-def module_servicos():
-    while True:
-        header("🔄 Serviços")
-        svc_count = run("systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | wc -l").strip()
-        print(f"  {C['d']}Serviços ativos: {svc_count}{C['n']}\n")
-        opt = pick([
-            ('list', "Listar serviços ativos"),
-            ('enabled', "Listar enabled (auto-start)"),
-            ('action', "Iniciar / Parar / Reiniciar"),
-            ('toggle', "Ativar / Desativar (auto-start)"),
-        ], "")
-        if opt == 'list':
-            show("Ativos", run("systemctl list-units --type=service --state=running --no-pager 2>/dev/null"))
-        elif opt == 'enabled':
-            show("Enabled", run("systemctl list-unit-files --type=service --state=enabled --no-pager 2>/dev/null"))
-        elif opt == 'action':
-            svc = input(f"\n  Nome do serviço (ex: sshd): ").strip()
-            if svc:
-                print(f"  1) Iniciar   2) Parar   3) Reiniciar")
-                a = input(f"\n  Opção: ").strip()
-                action_map = {'1': 'start', '2': 'stop', '3': 'restart'}
-                if a in action_map:
-                    run(f"systemctl {action_map[a]} {svc}", as_root=True)
-                    print(f"  {C['g']}✅ {svc} {action_map[a]} {C['n']}")
-                    time.sleep(1)
-        elif opt == 'toggle':
-            svc = input(f"\n  Nome do serviço: ").strip()
-            if svc:
-                print(f"  1) Ativar (enable)   2) Desativar (disable)")
-                a = input(f"\n  Opção: ").strip()
-                action_map = {'1': 'enable', '2': 'disable'}
-                if a in action_map:
-                    run(f"systemctl {action_map[a]} {svc}", as_root=True)
-                    print(f"  {C['g']}✅ {svc} {action_map[a]}d{C['n']}")
-                    time.sleep(1)
-        else:
-            break
-
-def module_autopilot():
-    header("🏁 Auto-Pilot")
-    print(f"\n  {C['y']}Vai executar:{C['n']}")
-    tasks = [
-        f"• {DISTRO.pkg_update} && {DISTRO.pkg_upgrade}",
-        f"• {DISTRO.pkg_clean}",
-        "• Limpar logs do journal",
-        "• TRIM no SSD",
-        "• Remover kernels antigos",
-        "• Limpar /tmp e cache",
-        "• Ativar zram",
-        "• DNS → 1.1.1.1 / 8.8.8.8",
-        "• Power saving WiFi OFF",
-        "• Esvaziar lixeira",
-        "• Atualizar flatpaks",
-    ]
-    for t in tasks:
-        print(f"     {t}")
-    if not confirm("\nContinuar?"):
-        return
-
-    steps = [
-        ("A atualizar pacotes...", cmd_update),
-        ("A limpar sistema...", cmd_clean),
-        ("A limpar logs...", lambda: run("journalctl --vacuum-size=100M", as_root=True)),
-        ("TRIM no SSD...", lambda: run("fstrim -v / 2>/dev/null", as_root=True)),
-        ("A remover kernels...", cmd_kernels_cleanup),
-        ("A limpar temporários...", lambda: run("rm -rf /tmp/* /var/tmp/* 2>/dev/null", as_root=True)),
-        ("A configurar WiFi...", lambda: (cmd_wifi_dns(), cmd_wifi_powersave())),
-        ("A ativar zram...", lambda: cmd_zram_activate() if not 'zram' in run("zramctl 2>/dev/null") else None),
-        ("A limpar lixeira...", lambda: run(f"rm -rf {USER_HOME}/.local/share/Trash/* 2>/dev/null")),
-        ("A atualizar flatpaks...", lambda: (has('flatpak') and run("flatpak update -y", timeout=300))),
-    ]
-    for msg, fn in steps:
-        print(f"  {C['y']}→{C['n']} {msg}")
-        fn()
-        time.sleep(0.3)
-    print(f"\n  {C['g']}✅ Auto-Pilot concluído!{C['n']}")
-    time.sleep(1)
-
-def module_exportar():
-    header("📋 Exportar")
-    outfile = f"{USER_HOME}/sysmenu-diagnostico-{time.strftime('%Y%m%d-%H%M%S')}.txt"
-    content = f"{'='*60}\n  🛠  SYS MENU — Diagnóstico do Sistema\n  Data: {time.strftime('%Y-%m-%d %H:%M:%S')}\n{'='*60}\n\n"
-    content += cmd_diag()
-    content += f"\n{cmd_smart()}\n"
-    content += cmd_rede()
-    with open(outfile, 'w') as f:
-        f.write(content)
-    size = run(f"du -h '{outfile}' | awk '{{print $1}}'").strip()
-    print(f"\n  {C['g']}✅ Diagnóstico exportado:{C['n']}")
-    print(f"     {C['B']}{outfile}{C['n']}")
-    print(f"     Tamanho: {size}")
+def acao_diag():
+    header()
+    print(f"  {C['B']}📊  Diagnóstico Completo{C['n']}\n")
+    out = cmd_diag()
+    set_output(out)
+    print(out[:2000])
+    print(f"\n  {C['d']}[Fim — output completo na aba 3]{C['n']}")
     input(f"\n  Enter...")
 
-# ── Main menu ────────────────────────────────
+def acao_rede():
+    header()
+    print(f"  {C['B']}🌐  WiFi + Rede{C['n']}\n")
+    opt = pick([
+        ('w',"📶  WiFi — diagnóstico"),
+        ('d',"🌐  DNS → Cloudflare/Google"),
+        ('p',"🔌  Power saving OFF"),
+        ('r',"🌍  Rede (portas, firewall)"),
+    ], "")
+    if opt=='w':
+        out = run(f"iw dev {WIFI} link 2>/dev/null; echo; iw dev {WIFI} station dump 2>/dev/null | grep -E 'signal:|bitrate:|retries:|connected time:'") if WIFI else "Sem WiFi"
+        set_output(out); show_output(out)
+    elif opt=='d' and SSID:
+        run(f"nmcli con mod \"{SSID}\" ipv4.dns '1.1.1.1 8.8.8.8' && nmcli con down \"{SSID}\" 2>/dev/null && nmcli con up \"{SSID}\" 2>/dev/null")
+        set_output("DNS alterado para 1.1.1.1 e 8.8.8.8")
+        print(f"  {C['g']}✅ DNS alterado{C['n']}")
+    elif opt=='p' and WIFI:
+        run(f"iw dev {WIFI} set power_save off", root=True)
+        print(f"  {C['g']}✅ Power saving OFF{C['n']}")
+    elif opt=='r':
+        out = cmd_rede(); set_output(out); show_output(out)
+    input()
+
+def acao_armazenamento():
+    h = header; h()
+    print(f"  {C['B']}💾  Armazenamento{C['n']}\n")
+    opt = pick([('z',"💾  Zram"),('s',"💽  SMART"),('e',"📁  Espaço")], "")
+    if opt=='z':
+        z = run("zramctl 2>/dev/null; echo; swapon --show 2>/dev/null")
+        if 'zram' in z:
+            set_output(z); show_output(z)
+        elif confirm("Zram inativo. Ativar?"):
+            run("systemctl start dev-zram0.swap", root=True)
+            z2 = run("zramctl 2>/dev/null")
+            set_output(z2 or "Falha")
+            print(f"  {C['g']}✅ Zram ativado{C['n']}" if 'zram' in z2 else f"  {C['r']}❌ Falha{C['n']}")
+    elif opt=='s':
+        if has('smartctl'):
+            out = cmd_smart(); set_output(out); show_output(out)
+            if confirm("Executar teste short?"):
+                run(f"smartctl -t short {DISK}", root=True)
+                print(f"  {C['g']}✅ Teste iniciado{C['n']}")
+        else:
+            print(f"  {C['r']}smartctl não instalado{C['n']}")
+    elif opt=='e':
+        out = cmd_espaco(); set_output(out); show_output(out)
+        if confirm("Esvaziar lixeira?"):
+            run(f"rm -rf {USER_HOME}/.local/share/Trash/* 2>/dev/null")
+            print(f"  {C['g']}✅ Lixeira vazia{C['n']}")
+    input()
+
+def acao_manutencao():
+    while True:
+        header()
+        print(f"  {C['B']}🧹  Manutenção{C['n']}\n")
+        opt = pick([
+            ('u',"📦  Atualizar pacotes"),
+            ('c',"🧽  Limpar cache"),
+            ('j',"📜  Limpar logs (journal)"),
+            ('t',"💾  TRIM no SSD"),
+            ('f',"🔧  Corrigir pacotes quebrados"),
+            ('k',"🗑  Remover kernels antigos"),
+            ('x',"🧹  Limpar /tmp + cache"),
+        ], "")
+        if opt=='u':
+            print(f"\n  {C['y']}A atualizar...{C['n']}\n")
+            run_live(f"{D.pu} && {D.pup}", root=True)
+            set_output(f"{D.pu} && {D.pup} executado")
+            print(f"\n  {C['g']}✅ Concluído{C['n']}")
+        elif opt=='c':
+            run_live(D.pc, root=True); set_output("Cache limpo")
+            print(f"  {C['g']}✅ Limpo{C['n']}")
+        elif opt=='j':
+            run_live("journalctl --vacuum-size=100M", root=True)
+            set_output("Logs limpos (100MB)")
+            print(f"  {C['g']}✅ Logs limpos{C['n']}")
+        elif opt=='t':
+            run_live("fstrim -v /", root=True)
+            set_output("TRIM executado")
+            print(f"  {C['g']}✅ TRIM{C['n']}")
+        elif opt=='f':
+            c = "apt-get install --fix-broken -y" if D.pkg=='apt-get' else "dnf check --fix"
+            run_live(c, root=True); set_output("Corrigido")
+            print(f"  {C['g']}✅ Corrigido{C['n']}")
+        elif opt=='k':
+            kernels_cleanup(); set_output("Kernels removidos")
+            print(f"  {C['g']}✅ Kernels limpos{C['n']}")
+        elif opt=='x':
+            run("rm -rf /tmp/* /var/tmp/* 2>/dev/null", root=True)
+            run(f"rm -rf {USER_HOME}/.cache/* 2>/dev/null")
+            set_output("Limpou /tmp e cache"); print(f"  {C['g']}✅ Limpo{C['n']}")
+        else: break
+        input("  Enter...")
+
+def acao_seguranca():
+    header()
+    print(f"  {C['B']}🔒  Segurança + Utilizadores{C['n']}\n")
+    opt = pick([('s',"🔐  Segurança (SSH, sudo)"),('u',"👥  Utilizadores")], "")
+    if opt=='s':
+        out = cmd_seguranca(); set_output(out); show_output(out)
+    elif opt=='u':
+        out = cmd_utilizadores(); set_output(out); show_output(out)
+    input()
+
+def acao_extras():
+    header()
+    print(f"  {C['B']}🐳  Extras{C['n']}\n")
+    out = (cmd_docker() + "\n" + cmd_flatpak()).strip() or "Nada detetado (Docker/Flatpak)"
+    set_output(out); show_output(out)
+    if has('flatpak') and confirm("Atualizar flatpaks?"):
+        run("flatpak update -y", t=300); print(f"  {C['g']}✅ Flatpaks atualizados{C['n']}")
+    if has('docker') and confirm("Limpar Docker?"):
+        run("docker container prune -f && docker image prune -f")
+        print(f"  {C['g']}✅ Docker limpo{C['n']}")
+    input()
+
+def acao_servicos():
+    while True:
+        header()
+        print(f"  {C['B']}🔄  Serviços{C['n']}\n")
+        opt = pick([
+            ('l',"📋  Listar ativos"),
+            ('e',"📋  Listar enabled"),
+            ('s',"▶  Iniciar / ⏹  Parar / 🔄  Reiniciar"),
+            ('d',"🔛  Ativar / 🔕  Desativar"),
+        ], "")
+        if opt=='l':
+            out = run("systemctl list-units --type=service --state=running --no-pager 2>/dev/null")
+            set_output(out); show_output(out)
+        elif opt=='e':
+            out = run("systemctl list-unit-files --type=service --state=enabled --no-pager 2>/dev/null")
+            set_output(out); show_output(out)
+        elif opt=='s':
+            s = input(f"\n  Serviço: ").strip()
+            if s:
+                a = input(f"  [1]Iniciar [2]Parar [3]Reiniciar: ").strip()
+                m = {'1':'start','2':'stop','3':'restart'}
+                if a in m:
+                    run(f"systemctl {m[a]} {s}", root=True)
+                    set_output(f"{s} {m[a]}")
+                    print(f"  {C['g']}✅ {s} {m[a]}ed{C['n']}")
+        elif opt=='d':
+            s = input(f"\n  Serviço: ").strip()
+            if s:
+                a = input(f"  [1]Ativar [2]Desativar: ").strip()
+                m = {'1':'enable','2':'disable'}
+                if a in m:
+                    run(f"systemctl {m[a]} {s}", root=True)
+                    set_output(f"{s} {m[a]}d")
+                    print(f"  {C['g']}✅ {s} {m[a]}d{C['n']}")
+        else: break
+        input("  Enter...")
+
+def acao_autopilot():
+    header()
+    print(f"  {C['B']}🏁  Auto-Pilot{C['n']}\n")
+    if not confirm("Executar tudo?"): return
+    for msg, fn in [
+        ("📦  Atualizar pacotes...", lambda: run_live(f"{D.pu} && {D.pup}", root=True)),
+        ("🧽  Limpar cache...", lambda: run_live(D.pc, root=True)),
+        ("📜  Limpar logs...", lambda: run_live("journalctl --vacuum-size=100M", root=True)),
+        ("💾  TRIM...", lambda: run_live("fstrim -v /", root=True)),
+        ("🗑  Kernels antigos...", kernels_cleanup),
+        ("🧹  Temporários...", lambda: run("rm -rf /tmp/* /var/tmp/* 2>/dev/null", root=True)),
+        ("💾  Zram...", lambda: (WIFI and run(f"iw dev {WIFI} set power_save off", root=True))),
+        ("🌐  DNS...", lambda: (SSID and run(f"nmcli con mod \"{SSID}\" ipv4.dns '1.1.1.1 8.8.8.8'"))),
+        ("📦  Flatpak...", lambda: (has('flatpak') and run("flatpak update -y", t=300))),
+    ]:
+        print(f"  {C['y']}→{C['n']} {msg}")
+        fn(); time.sleep(0.2)
+    set_output("Auto-Pilot concluído")
+    print(f"\n  {C['g']}✅ Auto-Pilot concluído!{C['n']}")
+    input()
+
+def acao_exportar():
+    outfile = f"{USER_HOME}/sysmenu-diagnostico-{time.strftime('%Y%m%d-%H%M%S')}.txt"
+    with open(outfile,'w') as f:
+        f.write(f"{'='*60}\n  Sys Menu — Diagnóstico\n  {time.strftime('%Y-%m-%d %H:%M:%S')}\n{'='*60}\n\n")
+        f.write(cmd_diag()+"\n"+cmd_smart()+"\n"+cmd_rede())
+    set_output(f"Exportado: {outfile}")
+    print(f"  {C['g']}✅ Exportado:{C['n']} {outfile}")
+    input()
+
+# ── Tab 3: Output ────────────────────────────
+def output_view():
+    header()
+    print(f"  {C['B']}📜  OUTPUT  (último comando){C['n']}\n")
+    print(f"  {C['d']}{'─'*50}{C['n']}")
+    if LAST_OUTPUT:
+        print(f"{LAST_OUTPUT}")
+    else:
+        print(f"  {C['d']}Nenhum comando executado ainda. Usa a aba 2 para executar algo.{C['n']}")
+    print(f"{C['d']}{'─'*50}{C['n']}")
+    print(f"\n  {C['d']}[Enter] Voltar  |  [c] Limpar output{C['n']}")
+    r = input(f"\n  {C['B']}»{C['n']} ").strip().lower()
+    if r == 'c':
+        set_output(""); output_view()
+
+# ── Commands ─────────────────────────────────
+def cmd_diag():
+    NL = "\n"
+    o = f"─── SISTEMA ───{NL}"
+    o += f"Hostname: {run('hostname').strip()}  |  Kernel: {os.uname().release}  |  "
+    o += f"OS: {run('grep PRETTY_NAME /etc/os-release|cut -d= -f2|tr -d \"\\\"\"').strip()}{NL}"
+    o += f"Uptime: {run('uptime -p|sed \"s/up //\"').strip()}  |  Load: {run('cat /proc/loadavg|cut -d\" \" -f1-3').strip()}{NL}"
+    o += f"{NL}─── CPU ───{NL}"
+    o += f"  {run('grep -m1 \"model name\" /proc/cpuinfo|cut -d: -f2').strip()} ({run('grep -c ^processor /proc/cpuinfo').strip()} núcleos){NL}"
+    o += f"{NL}─── MEMÓRIA ───{NL}"
+    o += run('free -h').strip() + NL
+    o += f"{NL}─── DISCO ───{NL}"
+    o += run('df -h /|tail -1|awk \'{printf "%s - %s de %s (%s livres)",$1,$3,$2,$4}\'') + NL
+    o += f"{NL}─── TEMPERATURAS ───{NL}"
+    o += run('sensors 2>/dev/null|grep -E \"Core|Package|temp1|Tctl\"|head -5').strip() + NL
+    gpu = run('nvidia-smi --query-gpu=name,temperature.gpu --format=csv,noheader 2>/dev/null') if has('nvidia-smi') else run('lspci|grep -iE \"vga|3d|display\"|cut -d: -f3-')
+    o += f"{NL}─── GPU ───{NL}{gpu.strip()}{NL}"
+    o += f"{NL}─── WIFI ───{NL}"
+    o += (run(f'iw dev {WIFI} link 2>/dev/null') if WIFI else '(sem WiFi)') + NL
+    o += f"{NL}─── PORTAS ───{NL}"
+    o += run("ss -tlnp|awk 'NR>1{print $5, $1}'|head -12") + NL
+    o += f"{NL}─── SERVIÇOS ───{NL}"
+    o += run("systemctl --failed|grep 'loaded failed'||echo 'Nenhum'") + NL
+    o += f"{NL}─── ZRAM ───{NL}"
+    o += run('zramctl 2>/dev/null||echo inativo') + NL
+    o += f"{NL}─── BOOT ───{NL}"
+    o += run('systemd-analyze 2>/dev/null').strip() + NL
+    return o
+
+def cmd_smart():
+    if not has('smartctl'): return "smartctl não instalado"
+    m = run(f"smartctl -i {DISK} 2>/dev/null|grep 'Device Model'|cut -d: -f2|xargs").strip()
+    h = run(f"smartctl -H {DISK} 2>/dev/null|grep 'SMART overall-health'|cut -d: -f2|xargs").strip()
+    t = run(f"smartctl -A {DISK} 2>/dev/null|awk '/Temperature_Celsius/{{print $10}}'").strip()
+    a = run(f"smartctl -A {DISK} 2>/dev/null|sed -n '8,25p'").strip()
+    return f"Modelo: {m}\nSaúde: {h}\nTemperatura: {t or 'N/A'}°C\n\nSMART:\n{a}"
+
+def cmd_rede():
+    NL = "\n"
+    o = f"─── INTERFACES ───{NL}"
+    o += run('ip -br addr|grep -v lo') + NL
+    o += f"{NL}─── PORTAS ───{NL}"
+    o += run("ss -tlnp|awk 'NR>1{split($5,a,\":\"); print a[length(a)]}'|sort -n|uniq|head -20") + NL
+    o += f"{NL}─── FIREWALL ───{NL}"
+    o += run('ufw status|head -5 2>/dev/null||echo n/a') + NL
+    o += f"{NL}─── PING ───{NL}"
+    c1 = run("ping -c2 -W2 1.1.1.1 2>/dev/null|awk '/rtt/{print $4}'|cut -d/ -f1").strip() or "—"
+    c2 = run("ping -c2 -W2 8.8.8.8 2>/dev/null|awk '/rtt/{print $4}'|cut -d/ -f1").strip() or "—"
+    o += f"Cloudflare: {c1} ms{NL}Google: {c2} ms{NL}"
+    return o
+
+def cmd_espaco():
+    NL = "\n"
+    o = f"─── PARTIÇÕES ───{NL}"
+    o += run('df -h|grep -v tmpfs|grep -v udev') + NL
+    o += f"{NL}─── TOP 15 PASTAS ───{NL}"
+    o += run(f'du -sh {USER_HOME}/* --exclude=.cache 2>/dev/null|sort -rh|head -15') + NL
+    return o
+
+def cmd_seguranca():
+    NL = "\n"; s = run("journalctl -u sshd -n20 --no-pager 2>/dev/null|grep -i 'failed\\|invalid'|tail -10") or "(sem registos)"
+    o = f"─── SSH FALHADOS ───{NL}{s}{NL}"
+    s2 = run('journalctl -u sudo -n15 --no-pager 2>/dev/null|tail -10') or "(sem registos)"
+    o += f"{NL}─── SUDO ───{NL}{s2}{NL}"
+    l = run('last -10 2>/dev/null|head -10') or '(n/a)'
+    o += f"{NL}─── LOGINS ───{NL}{l}{NL}"
+    return o
+
+def cmd_utilizadores():
+    NL = "\n"
+    w = run('w -h 2>/dev/null') or '(n/a)'
+    l = run('last -20 2>/dev/null|head -20') or '(n/a)'
+    return f"─── LOGADOS ───{NL}{w}{NL}{NL}─── ÚLTIMOS LOGINS ───{NL}{l}{NL}"
+
+def cmd_docker():
+    if not has('docker'): return ""
+    a = run('docker ps -q 2>/dev/null|wc -l').strip()
+    t = run('docker ps -aq 2>/dev/null|wc -l').strip()
+    i = run('docker images -q 2>/dev/null|wc -l').strip()
+    return f"─── DOCKER ───\nAtivos: {a}  |  Total: {t}  |  Imagens: {i}\n"
+
+def cmd_flatpak():
+    if not has('flatpak'): return ""
+    apps = run("flatpak list --app 2>/dev/null|awk '{print \"  \" $1}'")
+    up = run('flatpak remote-ls --updates 2>/dev/null|wc -l').strip()
+    return f"─── FLATPAK ───\n{apps}\nUpdates: {up}\n"
+
+def kernels_cleanup():
+    c = run("uname -r|sed 's/-[a-z].*//'").strip()
+    if D.id in ('debian','ubuntu'):
+        run(f"dpkg -l linux-image-* 2>/dev/null|awk '/^ii/{{print \\$2}}'|grep -v '{c}'|tail -n +3|xargs -r apt-get purge -y", root=True, t=180)
+        run("update-grub 2>/dev/null", root=True)
+
+# ── Nav / Main ───────────────────────────────
+def navegar():
+    global TAB
+    try:
+        c = input("").strip()
+        if c == '0': sys.exit(0)
+        elif c in ('1','2','3'): TAB = int(c); {1:dashboard,2:acoes,3:output_view}[TAB]()
+        else: navegar()
+    except: sys.exit(0)
+
 def main():
     if os.geteuid() != 0:
-        os.execvp('sudo', ['sudo', sys.executable] + sys.argv)
-
-    detect_hw()
-
-    # Check/install smartmontools if missing
-    if not has('smartctl'):
-        if confirm("smartmontools não instalado. Instalar?"):
-            run(f"{DISTRO.pkg_install} smartmontools", as_root=True)
-
-    while True:
-        header("🛠  Sys Menu")
-        print(f"  {C['B']}Categorias:{C['n']}\n")
-        print(f"    {C['g']}1{C['n']})  📊  Diagnóstico e monitoramento")
-        print(f"    {C['g']}2{C['n']})  🌐  Rede e WiFi")
-        print(f"    {C['g']}3{C['n']})  💾  Armazenamento e disco")
-        print(f"    {C['g']}4{C['n']})  🧹  Manutenção e limpeza")
-        print(f"    {C['g']}5{C['n']})  🔒  Segurança e utilizadores")
-        print(f"    {C['g']}6{C['n']})  🐳  Extras (Docker, Flatpak, Serviços)")
-        print(f"    {C['g']}7{C['n']})  📋  Exportar diagnóstico")
-        print(f"    {C['r']}0{C['n']})  ❌  Sair")
-        try:
-            choice = input(f"\n  {C['B']}Opção:{C['n']} ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-
-        branches = {
-            '1': [
-                ('diag', "🔍  Diagnóstico completo", module_diag),
-                ('hw', "⚡  Hardware (CPU/GPU/boot)", module_hardware),
-            ],
-            '2': [
-                ('wifi', "📶  WiFi", module_wifi),
-                ('rede', "🌐  Rede (portas, firewall)", module_rede),
-            ],
-            '3': [
-                ('zram', "💾  Zram", module_zram),
-                ('disk', "💽  SMART", module_smart),
-                ('space', "📁  Espaço em disco", module_espaco),
-            ],
-            '4': [
-                ('man', "🧹  Manutenção geral", module_manutencao),
-                ('deep', "🧼  Limpeza profunda", module_limpeza),
-                ('svc', "🔄  Gestão de serviços", module_servicos),
-                ('auto', "🏁  Auto-Pilot", module_autopilot),
-            ],
-            '5': [
-                ('sec', "🔐  Segurança", module_seguranca),
-                ('users', "👥  Utilizadores", module_utilizadores),
-            ],
-            '6': [
-                ('containers', "🐳  Docker / Flatpak", module_contentores),
-            ],
-            '7': [('export', "📋  Exportar diagnóstico", module_exportar)],
-        }
-
-        if choice == '0' or choice == '':
-            print(f"\n  {C['g']}Bye!{C['n']}")
-            break
-
-        if choice in branches:
-            while True:
-                header("Submenu")
-                items = branches[choice]
-                sub_opts = [(f'{k}', f'{lbl}') for k, lbl, _ in items]
-                sel = pick(sub_opts, "Escolha:")
-                if sel is None:
-                    break
-                for k, _, fn in items:
-                    if sel == k:
-                        fn()
-        else:
-            print(f"\n  {C['r']}Opção inválida{C['n']}")
-            time.sleep(1)
-
-if __name__ == '__main__':
-    if os.geteuid() != 0:
-        # Check if installed globally; if not, offer to install
         sp = os.path.abspath(sys.argv[0])
         tp = "/usr/local/bin/sysmenu"
-        if not (sp == tp or (os.path.exists(tp) and os.path.samefile(sp, tp)) or shutil.which("sysmenu")):
-            print(f"\n  {C['y']}⚠  sysmenu não está instalado globalmente.{C['n']}")
-            print(f"     A executar de: {C['B']}{sp}{C['n']}")
-            resp = input(f"  {C['y']}?{C['n']} Instalar em /usr/local/bin? (s/N): ").strip().lower()
-            if resp in ('s', 'y', 'sim', 'yes'):
+        if not (sp==tp or (os.path.exists(tp) and os.path.samefile(sp,tp)) or shutil.which("sysmenu")):
+            print(f"\n  {C['y']}⚠  sysmenu não instalado globalmente.{C['n']}")
+            if input("  Instalar? (s/N): ").strip().lower() in ('s','y'):
                 import getpass
-                pwd = getpass.getpass(f"  {C['d']}Password sudo:{C['n']} ")
-                r = os.system(f"echo '{pwd}' | sudo -S cp '{sp}' /usr/local/bin/sysmenu 2>/dev/null && sudo chmod +x /usr/local/bin/sysmenu")
-                if r == 0:
-                    print(f"\n  {C['g']}✅ Instalado! Agora executa: sysmenu{C['n']}\n")
-                else:
-                    print(f"\n  {C['r']}❌ Erro. Tenta: sudo cp sysmenu /usr/local/bin/{C['n']}\n")
+                p = getpass.getpass("  Password sudo: ")
+                os.system(f"echo '{p}' | sudo -S cp '{sp}' /usr/local/bin/sysmenu && sudo chmod +x /usr/local/bin/sysmenu")
+                print(f"  {C['g']}✅ Instalado! Executa: sysmenu{C['n']}\n")
         os.execvp('sudo', ['sudo', sys.executable] + sys.argv)
     else:
-        # Running as root — auto-install if from source
         sp = os.path.abspath(sys.argv[0])
         tp = "/usr/local/bin/sysmenu"
-        if sp != tp and not (os.path.exists(tp) and os.path.samefile(sp, tp)):
-            try:
-                subprocess.run(f"cp '{sp}' {tp} && chmod +x {tp}", shell=True, check=True)
-            except:
-                pass
-        main()
+        if sp != tp and not (os.path.exists(tp) and os.path.samefile(sp,tp)):
+            try: subprocess.run(f"cp '{sp}' {tp} && chmod +x {tp}", shell=True)
+            except: pass
+        detect_hw()
+        if not has('smartctl') and confirm("smartmontools não instalado. Instalar?"):
+            run(f"{D.pi} smartmontools", root=True)
+        dashboard()
+
+if __name__ == '__main__':
+    main()
