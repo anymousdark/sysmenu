@@ -10,7 +10,7 @@
 [ "$(id -u)" -ne 0 ] && exec sudo "$0" "$@"
 
 # ── Config ────────────────────────────────────
-TITLE="🛠  Sys Menu  —  v3.0"
+TITLE="🛠  Sys Menu  —  v3.1"
 WIFI=$(iw dev 2>/dev/null | awk '/Interface/{print $2}')
 SSID=$(nmcli -t -f NAME con show --active 2>/dev/null | head -1)
 DISK="/dev/sda"
@@ -25,7 +25,7 @@ msg()  { whiptail --title "$TITLE" --msgbox "$1" 20 70; }
 # ── Menu principal ───────────────────────────
 main_menu() {
   while true; do
-    CHOICE=$(whiptail --title "$TITLE" --menu "\nEscolha uma opção:" 22 72 14 \
+    CHOICE=$(whiptail --title "$TITLE" --menu "\nEscolha uma opção:" 26 74 19 \
       "1"  "🔍  Diagnóstico completo" \
       "2"  "📶  WiFi — diagnóstico e otimização" \
       "3"  "💾  Zram — status e ativação" \
@@ -40,6 +40,11 @@ main_menu() {
       "12" "📁  Espaço em disco" \
       "13" "📋  Exportar diagnóstico" \
       "14" "🏁  Auto-pilot (tudo de uma vez)" \
+      "15" "🔐  Segurança — SSH, sudo, logins" \
+      "16" "🐳  Contentores — Docker / Flatpak" \
+      "17" "🧼  Limpeza profunda — old kernels, temp" \
+      "18" "👥  Utilizadores — logins, cron" \
+      "19" "🔄  Serviços — gestão (start/stop)" \
       "0"  "❌  Sair" 3>&1 1>&2 2>&3)
 
     case $CHOICE in
@@ -58,6 +63,11 @@ main_menu() {
       12)  espaco_disco ;;
       13)  exportar_diag ;;
       14)  auto_pilot ;;
+      15)  seguranca ;;
+      16)  contentores ;;
+      17)  limpeza_profunda ;;
+      18)  utilizadores ;;
+      19)  servicos_manager ;;
       0)   echo "Bye!"; exit 0 ;;
     esac
   done
@@ -425,11 +435,14 @@ auto_pilot() {
 • Limpar logs do journal
 • TRIM no SSD
 • Corrigir pacotes quebrados
+• Remover kernels antigos
+• Limpar cache do apt, temp, npm
 • Ativar zram (se inativo)
 • DNS → 1.1.1.1 / 8.8.8.8
 • Power saving WiFi OFF
 • Esvaziar lixeira
-\nDeseja continuar?' 18 60 || return
+• Atualizar flatpaks
+\nDeseja continuar?' 20 60 || return
 
   (
     echo "XXX"; echo "A atualizar pacotes..."; echo "XXX"
@@ -441,6 +454,12 @@ auto_pilot() {
     fstrim -v / 2>/dev/null
     echo "XXX"; echo "A corrigir pacotes..."; echo "XXX"
     apt-get install --fix-broken -y 2>/dev/null
+    echo "XXX"; echo "A remover kernels antigos..."; echo "XXX"
+    kernels_cleanup
+    echo "XXX"; echo "A limpar temporários..."; echo "XXX"
+    rm -rf /tmp/* /var/tmp/* 2>/dev/null
+    rm -rf "$HOME/.npm/_cache" 2>/dev/null
+    apt-get clean -y 2>/dev/null
     echo "XXX"; echo "A configurar WiFi..."; echo "XXX"
     [ -n "$SSID" ] && nmcli con mod "$SSID" ipv4.dns "1.1.1.1 8.8.8.8" 2>/dev/null
     [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off 2>/dev/null
@@ -448,10 +467,189 @@ auto_pilot() {
     zramctl 2>/dev/null | grep -q zram || systemctl start dev-zram0.swap 2>/dev/null
     echo "XXX"; echo "A limpar lixeira..."; echo "XXX"
     rm -rf "$HOME/.local/share/Trash"/* 2>/dev/null
+    echo "XXX"; echo "A atualizar flatpaks..."; echo "XXX"
+    has flatpak && flatpak update -y 2>/dev/null
     echo "XXX"; echo "Concluído!"; echo "XXX"
   ) | whiptail --title "$TITLE — 🏁 Auto-Pilot" --gauge "A executar..." 8 60 0
 
   msg "✅ Auto-Pilot concluído!\n\nSistema otimizado e atualizado."
+}
+
+# ── Helper ────────────────────────────────────
+kernels_cleanup() {
+  local curr keep=2 count
+  curr=$(uname -r | sed 's/-[a-z].*//')
+  count=$(dpkg -l linux-image-* 2>/dev/null | awk '/^ii/{print $2}' | wc -l)
+  [ "$count" -le "$keep" ] && return
+  dpkg -l linux-image-* 2>/dev/null | awk '/^ii/{print $2}' | \
+    grep -v "$curr" | head -n -"$keep" | xargs -r apt-get purge -y 2>/dev/null
+  update-grub 2>/dev/null
+}
+
+# ── 15 ───────────────────────────────────────
+seguranca() {
+  local out
+  out=$(echo "────  LOGINS SSH FALHADOS  ────"
+    if [ -f /var/log/auth.log ]; then
+      grep "Failed password" /var/log/auth.log 2>/dev/null | tail -10
+    elif [ -f /var/log/secure ]; then
+      grep "Failed password" /var/log/secure 2>/dev/null | tail -10
+    else
+      journalctl -u sshd -n 20 --no-pager 2>/dev/null | grep -i "failed\|invalid" | tail -10
+    fi
+    echo ""
+    echo "────  ÚLTIMOS LOGINS VIA SUDO  ────"
+    journalctl -u sudo -n 15 --no-pager 2>/dev/null | tail -10
+    echo ""
+    echo "────  UTILIZADORES LOGADOS  ────"
+    w -h
+    echo ""
+    echo "────  PORTAS ABERTAS (todas)  ────"
+    ss -tupn 2>/dev/null | awk 'NR>1 && $1 ~ /tcp/{
+      split($5,a,":"); port=a[length(a)];
+      if(port !~ /^[0-9]+$/) next;
+      if(port>1024 && port<10000) next;
+      print port, $1, $6
+    }' | head -15
+    echo ""
+    echo "────  ÚLTIMAS TENTATIVAS DE LOGIN  ────"
+    last -10 2>/dev/null | head -10)
+  whiptail --title "$TITLE — 🔐 Segurança" --scrolltext --msgbox "$out" 24 80
+}
+
+# ── 16 ───────────────────────────────────────
+contentores() {
+  local out=""
+  if has docker; then
+    out+=$(echo "────  DOCKER  ────"
+      echo "Serviço: $(systemctl is-active docker 2>/dev/null)"
+      echo "Contentores ativos: $(docker ps -q 2>/dev/null | wc -l)"
+      echo "Contentores totais: $(docker ps -aq 2>/dev/null | wc -l)"
+      echo "Imagens: $(docker images -q 2>/dev/null | wc -l)"
+      [ "$(docker ps -q 2>/dev/null | wc -l)" -gt 0 ] && \
+        { echo ""; docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null; }
+      echo "")
+  fi
+  if has flatpak; then
+    out+=$(echo "────  FLATPAK  ────"
+      echo "Aplicações instaladas:"
+      flatpak list --app 2>/dev/null | awk '{print "  " $1}'
+      echo ""
+      UPD=$(flatpak update --app 2>/dev/null | grep -c "id.")
+      echo "Atualizações disponíveis: $UPD")
+  fi
+  if [ -z "$out" ]; then
+    out="Nenhum contentor (Docker) ou Flatpak detetado."
+  fi
+  whiptail --title "$TITLE — 🐳 Contentores" --scrolltext --msgbox "$out" 24 70
+
+  if has flatpak; then
+    if whiptail --title "Flatpak" --yesno "Atualizar todos os flatpaks?" 8 50; then
+      flatpak update -y 2>/dev/null
+      msg "✅ Flatpaks atualizados"
+    fi
+  fi
+  if has docker; then
+    if whiptail --title "Docker" --yesno "Limpar contentores parados e imagens não usadas?" 8 60; then
+      docker container prune -f 2>/dev/null
+      docker image prune -f 2>/dev/null
+      msg "✅ Docker limpo"
+    fi
+  fi
+}
+
+# ── 17 ───────────────────────────────────────
+limpeza_profunda() {
+  CHOICE=$(whiptail --title "$TITLE — 🧼 Limpeza profunda" --menu "\nEscolha:" 18 62 7 \
+    "1" "Remover kernels antigos (mantém 2 últimos)" \
+    "2" "Limpar /tmp e /var/tmp" \
+    "3" "Limpar cache do apt (clean)" \
+    "4" "Limpar cache do utilizador (~/.cache)" \
+    "5" "Limpar logs do journal (mínimo)" \
+    "6" "Esvaziar lixeira" \
+    "0" "Voltar" 3>&1 1>&2 2>&3)
+
+  case $CHOICE in
+    1) kernels_cleanup
+       msg "✅ Kernels antigos removidos" ;;
+    2) rm -rf /tmp/* /var/tmp/* 2>/dev/null
+       msg "✅ /tmp e /var/tmp limpos" ;;
+    3) apt-get clean -y 2>/dev/null
+       msg "✅ Cache do apt limpo" ;;
+    4) rm -rf "$HOME/.cache/"* 2>/dev/null
+       msg "✅ Cache de utilizador limpo" ;;
+    5) journalctl --vacuum-time=7d 2>/dev/null
+       msg "✅ Logs com mais de 7 dias removidos" ;;
+    6) rm -rf "$HOME/.local/share/Trash"/* 2>/dev/null
+       msg "✅ Lixeira vazia" ;;
+  esac
+}
+
+# ── 18 ───────────────────────────────────────
+utilizadores() {
+  local out
+  out=$(echo "────  QUEM ESTÁ LOGADO  ────"
+    w -h || echo "(n/a)"
+    echo ""
+    echo "────  ÚLTIMOS LOGINS  ────"
+    last -20 2>/dev/null || echo "(n/a)"
+    echo ""
+    echo "────  HISTÓRICO DE REBOOTS  ────"
+    last reboot -10 2>/dev/null
+    echo ""
+    echo "────  CRON JOBS (utilizadores)  ────"
+    for u in $(cut -d: -f1 /etc/passwd); do
+      crontab -u "$u" -l 2>/dev/null | grep -v "^#" | grep -v "^$" | \
+        sed "s/^/  $u: /"
+    done
+    echo ""
+    echo "────  CRON JOBS (sistema)  ────"
+    ls /etc/cron.d/ /etc/cron.hourly/ /etc/cron.daily/ 2>/dev/null | head -15 | sed 's/^/  /')
+  whiptail --title "$TITLE — 👥 Utilizadores" --scrolltext --msgbox "$out" 24 80
+}
+
+# ── 19 ───────────────────────────────────────
+servicos_manager() {
+  while true; do
+    local running
+    running=$(systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | \
+      awk '{print $1}' | head -25 | paste -sd ' ' -)
+
+    CHOICE=$(whiptail --title "$TITLE — 🔄 Serviços" --menu \
+      "Serviços ativos:\n$running\n" 20 72 5 \
+      "1" "Listar todos os serviços ativos" \
+      "2" "Listar serviços enabled (auto-start)" \
+      "3" "Iniciar / Parar / Reiniciar um serviço" \
+      "4" "Ativar / Desativar um serviço (auto-start)" \
+      "0" "Voltar" 3>&1 1>&2 2>&3)
+
+    case $CHOICE in
+      1) whiptail --title "Serviços ativos" --scrolltext \
+           --msgbox "$(systemctl list-units --type=service --state=running --no-pager 2>/dev/null)" 24 80 ;;
+      2) whiptail --title "Serviços enabled" --scrolltext \
+           --msgbox "$(systemctl list-unit-files --type=service --state=enabled --no-pager 2>/dev/null)" 24 80 ;;
+      3) local svc
+         svc=$(whiptail --title "Serviço" --inputbox "Nome do serviço (ex: sshd):" 8 60 3>&1 1>&2 2>&3)
+         [ -z "$svc" ] && continue
+         ACTION=$(whiptail --title "$svc" --menu "O que fazer com $svc?" 12 50 3 \
+           "1" "Iniciar" "2" "Parar" "3" "Reiniciar" 3>&1 1>&2 2>&3)
+         case $ACTION in
+           1) systemctl start "$svc" 2>/dev/null && msg "✅ $svc iniciado" || msg "❌ Falha ao iniciar $svc" ;;
+           2) systemctl stop "$svc" 2>/dev/null && msg "✅ $svc parado" || msg "❌ Falha ao parar $svc" ;;
+           3) systemctl restart "$svc" 2>/dev/null && msg "✅ $svc reiniciado" || msg "❌ Falha ao reiniciar $svc" ;;
+         esac ;;
+      4) local svc2
+         svc2=$(whiptail --title "Serviço" --inputbox "Nome do serviço (ex: bluetooth):" 8 60 3>&1 1>&2 2>&3)
+         [ -z "$svc2" ] && continue
+         ACTION2=$(whiptail --title "$svc2" --menu "O que fazer?" 12 50 2 \
+           "1" "Ativar (enable)" "2" "Desativar (disable)" 3>&1 1>&2 2>&3)
+         case $ACTION2 in
+           1) systemctl enable "$svc2" 2>/dev/null && msg "✅ $svc2 ativado (auto-start)" || msg "❌ Falha" ;;
+           2) systemctl disable "$svc2" 2>/dev/null && msg "✅ $svc2 desativado" || msg "❌ Falha" ;;
+         esac ;;
+      0|"") return ;;
+    esac
+  done
 }
 
 # ── START ────────────────────────────────────

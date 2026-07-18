@@ -19,7 +19,12 @@ Ferramenta tudo-em-um de diagnóstico e otimização do sistema Linux (GNOME/Deb
 | 11 | 🧹 Manutenção | `apt upgrade`, `autoremove`, limpar logs, `fstrim` |
 | 12 | 📁 Espaço | Análise de partições + top pastas + esvaziar lixeira |
 | 13 | 📋 Exportar | Exporta diagnóstico completo para `.txt` |
-| 14 | 🏁 Auto-Pilot | Executa tudo automaticamente (update, limpeza, TRIM, zram, DNS, power save) |
+| 14 | 🏁 Auto-Pilot | Executa tudo automaticamente (update, limpeza, TRIM, zram, DNS, power save, flatpak) |
+| 15 | 🔐 Segurança | SSH falhados, sudo audit, logins suspeitos, portas abertas |
+| 16 | 🐳 Contentores | Docker (containers/images) + Flatpak (list/update/clean) |
+| 17 | 🧼 Limpeza profunda | Old kernels, /tmp, cache apt, cache user, logs, lixeira |
+| 18 | 👥 Utilizadores | Logados, últimos logins, reboots, cron jobs |
+| 19 | 🔄 Serviços | Listar running/enabled, start/stop/restart, enable/disable |
 
 ## Instalação
 
