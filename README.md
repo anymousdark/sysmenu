@@ -26,6 +26,9 @@ Ferramenta tudo-em-um de diagnóstico e otimização do sistema Linux (GNOME/Deb
 | 18 | 👥 Utilizadores | Logados, últimos logins, reboots, cron jobs |
 | 19 | 🔄 Serviços | Listar running/enabled, start/stop/restart, enable/disable |
 
+O menu está organizado em árvore com 7 categorias principais:
+**📊 Diagnóstico** → **🌐 Rede** → **💾 Armazenamento** → **🧹 Manutenção** → **🔒 Segurança** → **🐳 Extras** → **📋 Exportar**
+
 ## Instalação
 
 ```bash

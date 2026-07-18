@@ -1,372 +1,555 @@
 #!/usr/bin/env bash
 
 # ──────────────────────────────────────────────
-#   🛠  SYS MENU — v3.0
+#   🛠  SYS MENU — v4.0
 #   Diagnóstico + otimização do sistema
 #   https://github.com/anymousdark/sysmenu
 # ──────────────────────────────────────────────
 
-# ── Auto-elevação para root ──────────────────
 [ "$(id -u)" -ne 0 ] && exec sudo "$0" "$@"
 
-# ── Config ────────────────────────────────────
-TITLE="🛠  Sys Menu  —  v3.1"
+TITLE="🛠  Sys Menu"
 WIFI=$(iw dev 2>/dev/null | awk '/Interface/{print $2}')
 SSID=$(nmcli -t -f NAME con show --active 2>/dev/null | head -1)
 DISK="/dev/sda"
 [ ! -b "$DISK" ] && DISK="/dev/$(lsblk -ndo NAME 2>/dev/null | head -1)"
 
 export TERM=${TERM:-xterm-256color}
-
 has() { command -v "$1" &>/dev/null; }
-
 msg()  { whiptail --title "$TITLE" --msgbox "$1" 20 70; }
 
-# ── Menu principal ───────────────────────────
-main_menu() {
+# ── Helpers ──────────────────────────────────
+section() { echo "━━━ $1 ━━━"; }
+
+kernels_cleanup() {
+  local curr keep=2
+  curr=$(uname -r | sed 's/-[a-z].*//')
+  dpkg -l linux-image-* 2>/dev/null | awk '/^ii/{print $2}' | \
+    grep -v "$curr" | tail -n +3 | xargs -r apt-get purge -y 2>/dev/null
+  update-grub 2>/dev/null
+}
+
+show() {
+  whiptail --title "$TITLE — $1" --scrolltext --msgbox "$2" 24 80
+}
+
+menu_tree() {
   while true; do
-    CHOICE=$(whiptail --title "$TITLE" --menu "\nEscolha uma opção:" 26 74 19 \
-      "1"  "🔍  Diagnóstico completo" \
-      "2"  "📶  WiFi — diagnóstico e otimização" \
-      "3"  "💾  Zram — status e ativação" \
-      "4"  "🛠   Serviços com falha" \
-      "5"  "💽  Saúde do disco (SMART)" \
-      "6"  "🌡   Temperaturas / sensores" \
-      "7"  "📊  Memória e CPU" \
-      "8"  "📝  Logs do sistema" \
-      "9"  "⚡  Hardware (CPU/GPU/boot)" \
-      "10" "🌐  Rede (portas, firewall, ping)" \
-      "11" "🧹  Manutenção (update, limpeza)" \
-      "12" "📁  Espaço em disco" \
-      "13" "📋  Exportar diagnóstico" \
-      "14" "🏁  Auto-pilot (tudo de uma vez)" \
-      "15" "🔐  Segurança — SSH, sudo, logins" \
-      "16" "🐳  Contentores — Docker / Flatpak" \
-      "17" "🧼  Limpeza profunda — old kernels, temp" \
-      "18" "👥  Utilizadores — logins, cron" \
-      "19" "🔄  Serviços — gestão (start/stop)" \
+    CHOICE=$(whiptail --title "$TITLE  —  v4.0" --menu "
+  ┌─ Principal ──────────────────────────┐
+  │                                    │
+  │  Escolha uma categoria:            │
+  └────────────────────────────────────┘
+" 20 58 8 \
+      "1"  "📊  Diagnóstico e monitoramento" \
+      "2"  "🌐  Rede e WiFi" \
+      "3"  "💾  Armazenamento e disco" \
+      "4"  "🧹  Manutenção e limpeza" \
+      "5"  "🔒  Segurança e utilizadores" \
+      "6"  "🐳  Extras (Docker, Flatpak, Serviços)" \
+      "7"  "📋  Exportar diagnóstico" \
       "0"  "❌  Sair" 3>&1 1>&2 2>&3)
 
     case $CHOICE in
       "")  echo "Bye!"; exit 0 ;;
-      1)   diag_completo ;;
-      2)   wifi_menu ;;
-      3)   zram_menu ;;
-      4)   servicos_falha ;;
-      5)   disk_smart ;;
-      6)   temperaturas ;;
-      7)   mem_cpu ;;
-      8)   logs_sistema ;;
-      9)   hardware_info ;;
-      10)  rede_menu ;;
-      11)  manutencao ;;
-      12)  espaco_disco ;;
-      13)  exportar_diag ;;
-      14)  auto_pilot ;;
-      15)  seguranca ;;
-      16)  contentores ;;
-      17)  limpeza_profunda ;;
-      18)  utilizadores ;;
-      19)  servicos_manager ;;
+      1)   sub_diagnostico ;;
+      2)   sub_rede ;;
+      3)   sub_armazenamento ;;
+      4)   sub_manutencao ;;
+      5)   sub_seguranca ;;
+      6)   sub_extras ;;
+      7)   exportar_diag ;;
       0)   echo "Bye!"; exit 0 ;;
     esac
   done
 }
 
-# ── Helpers ──────────────────────────────────
-section() {
-  echo ""
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "  $1"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+# ════════════════════════════════════════════
+#   📊  DIAGNÓSTICO E MONITORAMENTO
+# ════════════════════════════════════════════
+sub_diagnostico() {
+  while true; do
+    CHOICE=$(whiptail --title "$TITLE — 📊 Diagnóstico" --menu "
+  ┌─ Diagnóstico e Monitoramento ────────┐
+  │                                    │
+  │  Escolha uma opção:                │
+  └────────────────────────────────────┘
+" 18 58 6 \
+      "1" "🔍  Diagnóstico completo" \
+      "2" "🌡   Temperaturas" \
+      "3" "📊  Memória e CPU (top)" \
+      "4" "⚡  Hardware (CPU/GPU/boot)" \
+      "5" "📝  Logs do sistema" \
+      "0" "⬅  Voltar" 3>&1 1>&2 2>&3)
+
+    case $CHOICE in
+      1) diag_completo ;;
+      2) show "🌡 Temperaturas" "$(sensors 2>/dev/null || echo 'lm-sensors não instalado')" ;;
+      3) show "📊 Memória/CPU" "$(echo "── MEMÓRIA ──"; free -h; echo ""; echo "── UPTIME ──"; uptime; echo ""; echo "── TOP CPU ──"; ps aux --sort=-%cpu 2>/dev/null | head -8; echo ""; echo "── TOP RAM ──"; ps aux --sort=-%mem 2>/dev/null | head -8)" ;;
+      4) hardware_info ;;
+      5) show "📝 Logs (erros do boot)" "$(journalctl -p 3 -b 0 --no-pager -n 50 2>/dev/null || echo 'Sem acesso')" ;;
+      0|"") return ;;
+    esac
+  done
 }
 
-capture() {
-  local cmd="$*"
-  eval "$cmd" 2>/dev/null || echo "(comando não disponível)"
-}
-
-show_output() {
-  local label="$1"
-  shift
-  local out
-  out=$("$@" 2>/dev/null)
-  whiptail --title "$TITLE — $label" --scrolltext --msgbox "$out" 24 80
-}
-
-# ── 1 ────────────────────────────────────────
 diag_completo() {
-  {
+  local out
+  out=$(
     section "SISTEMA"
     echo "Hostname : $(hostname)"
     echo "Kernel   : $(uname -r)"
     echo "OS       : $(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')"
     echo "Uptime   : $(uptime -p | sed 's/up //')"
     echo "Load     : $(cat /proc/loadavg | cut -d' ' -f1-3)"
-
     section "CPU"
     grep -m1 "model name" /proc/cpuinfo | cut -d: -f2
     echo "Núcleos  : $(grep -c ^processor /proc/cpuinfo)"
-
     section "MEMÓRIA"
     free -h | awk 'NR==1{printf "%-8s %8s %8s %8s\n",$1,$2,$3,$4} NR==2{printf "%-8s %8s %8s %8s\n",$1,$2,$3,$4}'
-
     section "DISCO"
     df -h / | awk 'NR==2{printf "%s — %s de %s (%s livres)\n",$1,$3,$2,$4}'
-
     section "TEMPERATURAS"
-    capture sensors
-
+    sensors 2>/dev/null | grep -E "Core|Package|temp1|Composite|Tctl|edge" | head -5
     section "GPU"
-    if has nvidia-smi; then
-      nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu --format=csv,noheader
-    else
-      lspci | grep -iE "vga|3d|display" | cut -d: -f3-
-    fi
-
+    if has nvidia-smi; then nvidia-smi --query-gpu=name,temperature.gpu --format=csv,noheader 2>/dev/null
+    else lspci | grep -iE "vga|3d|display" | cut -d: -f3-; fi
     section "WIFI"
-    if [ -n "$WIFI" ]; then
-      iw dev "$WIFI" link
-      iw dev "$WIFI" station dump | grep signal
-    else
-      echo "(sem interface WiFi)"
-    fi
-
+    if [ -n "$WIFI" ]; then iw dev "$WIFI" link 2>/dev/null
+    else echo "(sem WiFi)"; fi
     section "PORTAS A ESCUTAR"
-    ss -tlnp | awk 'NR>1{print $5, $1}' | head -15
-
+    ss -tlnp | awk 'NR>1{print $5, $1}' | head -12
     section "SERVIÇOS COM FALHA"
     systemctl --failed | grep "loaded failed" || echo "Nenhum"
-
     section "ZRAM"
     zramctl || echo "Inativo"
-
     section "BOOT"
-    systemd-analyze
-    echo ""
-    echo "Serviços mais lentos:"
-    systemd-analyze blame | head -5
-  } > /tmp/sysmenu-diag.txt
-
-  whiptail --title "$TITLE — Diagnóstico Completo" --scrolltext \
-    --msgbox "$(cat /tmp/sysmenu-diag.txt)" 24 80
+    systemd-analyze 2>/dev/null
+  )
+  show "🔍 Diagnóstico completo" "$out"
 }
 
-# ── 2 ────────────────────────────────────────
-wifi_menu() {
-  [ -z "$WIFI" ] && { msg "Sem interface WiFi detectada."; return; }
+hardware_info() {
+  local out
+  out=$(
+    section "CPU"
+    grep -m1 "model name" /proc/cpuinfo | cut -d: -f2
+    echo "Núcleos lógicos: $(grep -c ^processor /proc/cpuinfo)"
+    lscpu 2>/dev/null | grep -E "CPU max MHz|CPU min MHz|Architecture"
+    section "GPU"
+    if has nvidia-smi; then
+      nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total --format=csv,noheader 2>/dev/null
+    else lspci | grep -iE "vga|3d|display" | cut -d: -f3-; fi
+    section "BOOT"
+    systemd-analyze 2>/dev/null
+    echo ""
+    echo "Serviços mais lentos:"
+    systemd-analyze blame 2>/dev/null | head -8
+    section "DISPOSITIVOS"
+    lspci 2>/dev/null | grep -iE "network|ethernet|wireless|audio|nvme|sata" | head -8
+  )
+  show "⚡ Hardware" "$out"
+}
 
+# ════════════════════════════════════════════
+#   🌐  REDE E WIFI
+# ════════════════════════════════════════════
+sub_rede() {
   while true; do
-    local info
-    info=$(echo "Interface: $WIFI"; iw dev "$WIFI" link 2>/dev/null; \
-           iw dev "$WIFI" station dump 2>/dev/null | grep -E "signal:|bitrate:|retries:|connected time:")
-
-    CHOICE=$(whiptail --title "$TITLE — 📶 WiFi" --menu "$info" 20 72 5 \
-      "1" "DNS → Cloudflare/Google" \
-      "2" "Desligar power saving" \
-      "3" "Escanear redes" \
-      "0" "Voltar" 3>&1 1>&2 2>&3)
+    CHOICE=$(whiptail --title "$TITLE — 🌐 Rede" --menu "
+  ┌─ Rede e WiFi ────────────────────────┐
+  │                                    │
+  │  Escolha uma opção:                │
+  └────────────────────────────────────┘
+" 16 58 4 \
+      "1" "📶  WiFi — diagnóstico e otimização" \
+      "2" "🌐  Rede (portas, firewall, ping)" \
+      "3" "📡  Redes disponíveis (scan)" \
+      "0" "⬅  Voltar" 3>&1 1>&2 2>&3)
 
     case $CHOICE in
-      1) nmcli con mod "$SSID" ipv4.dns "1.1.1.1 8.8.8.8"
-         nmcli con down "$SSID" 2>/dev/null && nmcli con up "$SSID" 2>/dev/null
-         msg "DNS alterado para 1.1.1.1 e 8.8.8.8 ✓" ;;
-      2) iw dev "$WIFI" set power_save off
-         msg "Power saving desligado ✓" ;;
-      3) nmcli dev wifi rescan
-         msg "Scan concluído. Use 'nmcli dev wifi list' para ver as redes." ;;
+      1) wifi_menu ;;
+      2) rede_info ;;
+      3) show "📡 Redes" "$(nmcli dev wifi list 2>/dev/null || echo 'Sem interface WiFi')" ;;
       0|"") return ;;
     esac
   done
 }
 
-# ── 3 ────────────────────────────────────────
+wifi_menu() {
+  [ -z "$WIFI" ] && { msg "Sem interface WiFi."; return; }
+  while true; do
+    local info
+    info=$(echo "Interface: $WIFI"; iw dev "$WIFI" link 2>/dev/null; \
+           iw dev "$WIFI" station dump 2>/dev/null | grep -E "signal:|bitrate:|retries:|connected time:")
+    CHOICE=$(whiptail --title "$TITLE — 📶 WiFi" --menu "$info" 18 72 4 \
+      "1" "DNS → Cloudflare/Google" \
+      "2" "Desligar power saving" \
+      "3" "Scan de redes" \
+      "0" "Voltar" 3>&1 1>&2 2>&3)
+    case $CHOICE in
+      1) nmcli con mod "$SSID" ipv4.dns "1.1.1.1 8.8.8.8"
+         nmcli con down "$SSID" 2>/dev/null && nmcli con up "$SSID" 2>/dev/null
+         msg "✅ DNS alterado para 1.1.1.1 / 8.8.8.8" ;;
+      2) iw dev "$WIFI" set power_save off && msg "✅ Power saving OFF" ;;
+      3) nmcli dev wifi rescan && msg "✅ Scan concluído" ;;
+      0|"") return ;;
+    esac
+  done
+}
+
+rede_info() {
+  local out
+  out=$(
+    section "INTERFACES ATIVAS"
+    ip -br addr | grep -v lo
+    section "PORTAS A ESCUTAR"
+    ss -tlnp | awk 'NR>1{
+      split($5,a,":"); port=a[length(a)]; print "  " port " → " $1
+    }' | head -20
+    section "FIREWALL"
+    if has ufw; then ufw status | head -5
+    elif has iptables; then iptables -L -n --line-numbers 2>/dev/null | head -8
+    else echo "Nenhum firewall detetado"; fi
+    section "DNS"
+    resolvectl status 2>/dev/null | grep "DNS Servers" | head -1
+    section "PING"
+    echo "Cloudflare (1.1.1.1): $(ping -c 2 -W 2 1.1.1.1 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms"
+    echo "Google     (8.8.8.8): $(ping -c 2 -W 2 8.8.8.8 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms"
+  )
+  show "🌐 Rede" "$out"
+}
+
+# ════════════════════════════════════════════
+#   💾  ARMAZENAMENTO E DISCO
+# ════════════════════════════════════════════
+sub_armazenamento() {
+  while true; do
+    CHOICE=$(whiptail --title "$TITLE — 💾 Armazenamento" --menu "
+  ┌─ Armazenamento e Disco ──────────────┐
+  │                                    │
+  │  Escolha uma opção:                │
+  └────────────────────────────────────┘
+" 16 58 4 \
+      "1" "💾  Zram — status e ativação" \
+      "2" "💽  Saúde do disco (SMART)" \
+      "3" "📁  Espaço em disco e pastas" \
+      "0" "⬅  Voltar" 3>&1 1>&2 2>&3)
+
+    case $CHOICE in
+      1) zram_menu ;;
+      2) disk_smart ;;
+      3) espaco_disco ;;
+      0|"") return ;;
+    esac
+  done
+}
+
 zram_menu() {
-  local status
   if zramctl 2>/dev/null | grep -q zram; then
-    status=$(zramctl; echo ""; swapon --show)
-    whiptail --title "$TITLE — 💾 Zram" --scrolltext --msgbox "$status" 20 70
+    show "💾 Zram" "$(zramctl; echo ""; swapon --show)"
   else
-    if whiptail --title "$TITLE — 💾 Zram" --yesno "Zram está inativo.\n\nAtivar agora?" 10 50; then
+    if whiptail --title "💾 Zram" --yesno "Zram inativo. Ativar agora?" 8 50; then
       systemctl start dev-zram0.swap 2>/dev/null
-      if zramctl | grep -q zram; then
-        msg "✅ Zram ativado com sucesso!"
-      else
-        msg "❌ Falha. systemd-zram-generator instalado?"
-      fi
+      zramctl | grep -q zram && msg "✅ Zram ativado" || msg "❌ Falha (systemd-zram-generator instalado?)"
     fi
   fi
 }
 
-# ── 4 ────────────────────────────────────────
-servicos_falha() {
-  local failed
-  failed=$(systemctl --failed 2>/dev/null)
-  if ! echo "$failed" | grep -q "failed"; then
-    msg "✅ Nenhum serviço com falha."
-    return
-  fi
-
-  whiptail --title "$TITLE — 🛠 Serviços com falha" --scrolltext --msgbox "$failed" 20 70
-
-  if whiptail --title "Confirmar" --yesno "Desativar o serviço com falha?" 8 50; then
-    local unit
-    unit=$(echo "$failed" | awk '/loaded failed/{print $1}')
-    [ -n "$unit" ] && systemctl disable --now "$unit" 2>/dev/null && msg "✅ $unit desativado"
-  fi
-}
-
-# ── 5 ────────────────────────────────────────
 disk_smart() {
   local model health temp attrib
   model=$(smartctl -i "$DISK" 2>/dev/null | grep "Device Model" | cut -d: -f2 | xargs)
   health=$(smartctl -H "$DISK" 2>/dev/null | grep "SMART overall-health" | cut -d: -f2 | xargs)
   temp=$(smartctl -A "$DISK" 2>/dev/null | awk '/Temperature_Celsius/{print $10}')
   attrib=$(smartctl -A "$DISK" 2>/dev/null | sed -n '7,25p')
-
-  local out
-  out="Modelo: $model\nSaúde: $health\nTemperatura: ${temp:-N/A}°C\n\nSMART Attributes:\n$attrib"
-
-  whiptail --title "$TITLE — 💽 Disco" --scrolltext --msgbox "$out" 20 70
-
+  show "💽 Disco" "Modelo: $model\nSaúde: $health\nTemperatura: ${temp:-N/A}°C\n\nSMART:\n$attrib"
   if whiptail --title "Teste SMART" --yesno "Executar teste rápido (short)?" 8 50; then
-    smartctl -t short "$DISK" 2>/dev/null
-    msg "✅ Teste iniciado!\n\nVerifique depois com:\n  smartctl -l selftest $DISK"
+    smartctl -t short "$DISK" 2>/dev/null && msg "✅ Teste iniciado!\n\nVerifique: smartctl -l selftest $DISK"
   fi
 }
 
-# ── 6 ────────────────────────────────────────
-temperaturas() {
+espaco_disco() {
   local out
-  out=$(sensors 2>/dev/null) || out="lm-sensors não disponível"
-  whiptail --title "$TITLE — 🌡 Temperaturas" --scrolltext --msgbox "$out" 20 70
+  out=$(
+    section "PARTIÇÕES"
+    df -h | grep -v tmpfs | grep -v udev
+    section "TOP 15 PASTAS EM $HOME"
+    du -sh "$HOME"/* --exclude=.cache 2>/dev/null | sort -rh | head -15
+    echo ""
+    echo "Lixeira: $(du -sh $HOME/.local/share/Trash 2>/dev/null | awk '{print $1}')"
+    echo "Cache  : $(du -sh $HOME/.cache 2>/dev/null | awk '{print $1}')"
+  )
+  show "📁 Espaço" "$out"
+  if whiptail --title "Lixeira" --yesno "Esvaziar lixeira?" 8 50; then
+    rm -rf "$HOME/.local/share/Trash"/* 2>/dev/null && msg "✅ Lixeira vazia"
+  fi
 }
 
-# ── 7 ────────────────────────────────────────
-mem_cpu() {
-  local out
-  out=$(echo "── MEMÓRIA ──"; free -h; echo ""; echo "── UPTIME ──"; uptime; \
-        echo ""; echo "── TOP CPU ──"; ps aux --sort=-%cpu 2>/dev/null | head -6; \
-        echo ""; echo "── TOP RAM ──"; ps aux --sort=-%mem 2>/dev/null | head -6)
-  whiptail --title "$TITLE — 📊 Memória e CPU" --scrolltext --msgbox "$out" 24 80
+# ════════════════════════════════════════════
+#   🧹  MANUTENÇÃO E LIMPEZA
+# ════════════════════════════════════════════
+sub_manutencao() {
+  while true; do
+    CHOICE=$(whiptail --title "$TITLE — 🧹 Manutenção" --menu "
+  ┌─ Manutenção e Limpeza ───────────────┐
+  │                                    │
+  │  Escolha uma opção:                │
+  └────────────────────────────────────┘
+" 17 58 5 \
+      "1" "🧹  Manutenção geral (update, limpeza)" \
+      "2" "🧼  Limpeza profunda (kernels, temp)" \
+      "3" "🏁  Auto-Pilot (tudo automático)" \
+      "4" "🔄  Serviços — gestão (start/stop)" \
+      "0" "⬅  Voltar" 3>&1 1>&2 2>&3)
+
+    case $CHOICE in
+      1) manutencao_geral ;;
+      2) limpeza_profunda ;;
+      3) auto_pilot ;;
+      4) servicos_manager ;;
+      0|"") return ;;
+    esac
+  done
 }
 
-# ── 8 ────────────────────────────────────────
-logs_sistema() {
-  local out
-  out=$(journalctl -p 3 -b 0 --no-pager -n 50 2>/dev/null) || out="Sem acesso aos logs"
-  whiptail --title "$TITLE — 📝 Logs (erros do boot)" --scrolltext --msgbox "$out" 24 80
-}
-
-# ── 9 ────────────────────────────────────────
-hardware_info() {
-  local out
-  out=$(echo "── CPU ──"
-    grep -m1 "model name" /proc/cpuinfo | cut -d: -f2
-    echo "Núcleos lógicos: $(grep -c ^processor /proc/cpuinfo)"
-    lscpu 2>/dev/null | grep -E "CPU max MHz|CPU min MHz|Architecture"
-    echo ""
-    echo "── GPU ──"
-    if has nvidia-smi; then
-      nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total \
-        --format=csv,noheader
-    else
-      lspci | grep -iE "vga|3d|display" | cut -d: -f3-
-    fi
-    echo ""
-    echo "── BOOT ──"
-    systemd-analyze
-    echo ""
-    echo "Serviços mais lentos:"
-    systemd-analyze blame | head -8
-    echo ""
-    echo "── DISPOSITIVOS ──"
-    lspci | grep -iE "network|ethernet|wireless|audio|nvme|sata")
-  whiptail --title "$TITLE — ⚡ Hardware" --scrolltext --msgbox "$out" 24 80
-}
-
-# ── 10 ───────────────────────────────────────
-rede_menu() {
-  local out
-  out=$(echo "── INTERFACES ATIVAS ──"
-    ip -br addr | grep -v lo
-    echo ""
-    echo "── PORTAS A ESCUTAR ──"
-    ss -tlnp | awk 'NR>1{
-      split($5,a,":"); port=a[length(a)]; print "  " port " → " $1
-    }' | head -20
-    echo ""
-    echo "── FIREWALL ──"
-    if has ufw; then ufw status | head -5
-    elif has iptables; then iptables -L -n --line-numbers | head -8
-    else echo "Nenhum firewall detetado"; fi
-    echo ""
-    echo "── DNS ──"
-    resolvectl status 2>/dev/null | grep "DNS Servers" | head -1
-    echo ""
-    echo "── PING ──"
-    echo "Cloudflare (1.1.1.1): $(ping -c 2 -W 2 1.1.1.1 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms"
-    echo "Google     (8.8.8.8): $(ping -c 2 -W 2 8.8.8.8 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms")
-  whiptail --title "$TITLE — 🌐 Rede" --scrolltext --msgbox "$out" 24 80
-}
-
-# ── 11 ───────────────────────────────────────
-manutencao() {
-  CHOICE=$(whiptail --title "$TITLE — 🧹 Manutenção" --menu "\nEscolha:" 16 60 6 \
+manutencao_geral() {
+  CHOICE=$(whiptail --title "🧹 Manutenção" --menu "\nEscolha:" 16 56 6 \
     "1" "Atualizar pacotes (apt upgrade)" \
     "2" "Limpar cache do apt" \
-    "3" "Limpar logs do journal (100MB)" \
-    "4" "Executar TRIM no SSD" \
+    "3" "Limpar logs do journal" \
+    "4" "TRIM no SSD" \
     "5" "Corrigir pacotes quebrados" \
     "0" "Voltar" 3>&1 1>&2 2>&3)
-
   case $CHOICE in
-    1)
-      whiptail --title "A atualizar..." --infobox "A executar apt update && apt upgrade..." 5 50
-      apt-get update -qq 2>/dev/null
-      apt-get upgrade -y 2>/dev/null | tail -3
-      msg "✅ Atualização concluída" ;;
-    2)
-      apt-get autoclean -y 2>/dev/null
-      apt-get autoremove -y 2>/dev/null
-      msg "✅ Limpeza concluída" ;;
-    3)
-      journalctl --vacuum-size=100M 2>/dev/null
-      msg "✅ Logs limpos (últimos 100MB mantidos)" ;;
-    4)
-      fstrim -v / 2>/dev/null
-      msg "✅ TRIM executado" ;;
-    5)
-      apt-get install --fix-broken -y 2>/dev/null | tail -3
-      msg "✅ Correção concluída" ;;
+    1) whiptail --title "A atualizar..." --infobox "apt update && apt upgrade..." 4 50
+       apt-get update -qq 2>/dev/null && apt-get upgrade -y 2>/dev/null | tail -3
+       msg "✅ Atualizado" ;;
+    2) apt-get autoclean -y 2>/dev/null && apt-get autoremove -y 2>/dev/null && msg "✅ Limpo" ;;
+    3) journalctl --vacuum-size=100M 2>/dev/null && msg "✅ Logs limpos (100MB)" ;;
+    4) fstrim -v / 2>/dev/null && msg "✅ TRIM executado" ;;
+    5) apt-get install --fix-broken -y 2>/dev/null | tail -3 && msg "✅ Corrigido" ;;
   esac
 }
 
-# ── 12 ───────────────────────────────────────
-espaco_disco() {
-  local out
-  out=$(echo "── PARTIÇÕES ──"
-    df -h | grep -v tmpfs | grep -v udev
-    echo ""
-    echo "── TOP 15 PASTAS EM $HOME ──"
-    du -sh "$HOME"/* --exclude=.cache 2>/dev/null | sort -rh | head -15
-    echo ""
-    echo "Lixeira : $(du -sh $HOME/.local/share/Trash 2>/dev/null | awk '{print $1}')"
-    echo "Cache   : $(du -sh $HOME/.cache 2>/dev/null | awk '{print $1}')")
-  whiptail --title "$TITLE — 📁 Espaço em disco" --scrolltext --msgbox "$out" 24 80
+limpeza_profunda() {
+  CHOICE=$(whiptail --title "🧼 Limpeza profunda" --menu "\nEscolha:" 16 56 6 \
+    "1" "Remover kernels antigos (últimos 2)" \
+    "2" "Limpar /tmp e /var/tmp" \
+    "3" "Limpar cache do apt (clean)" \
+    "4" "Limpar ~/.cache do utilizador" \
+    "5" "Limpar logs (>7 dias)" \
+    "6" "Esvaziar lixeira" \
+    "0" "Voltar" 3>&1 1>&2 2>&3)
+  case $CHOICE in
+    1) kernels_cleanup && msg "✅ Kernels antigos removidos" ;;
+    2) rm -rf /tmp/* /var/tmp/* 2>/dev/null && msg "✅ /tmp e /var/tmp limpos" ;;
+    3) apt-get clean -y 2>/dev/null && msg "✅ Cache apt limpo" ;;
+    4) rm -rf "$HOME/.cache/"* 2>/dev/null && msg "✅ Cache do utilizador limpo" ;;
+    5) journalctl --vacuum-time=7d 2>/dev/null && msg "✅ Logs >7 dias removidos" ;;
+    6) rm -rf "$HOME/.local/share/Trash"/* 2>/dev/null && msg "✅ Lixeira vazia" ;;
+  esac
+}
 
-  if whiptail --title "Lixeira" --yesno "Esvaziar a lixeira?" 8 50; then
+auto_pilot() {
+  whiptail --title "🏁 Auto-Pilot" --yesno "\nVai executar:\n\n\
+• apt update & upgrade\n\
+• apt autoclean & autoremove\n\
+• Limpar logs do journal\n\
+• TRIM no SSD\n\
+• Corrigir pacotes quebrados\n\
+• Remover kernels antigos\n\
+• Limpar /tmp e cache apt\n\
+• Ativar zram (se inativo)\n\
+• DNS → 1.1.1.1 / 8.8.8.8\n\
+• Power saving WiFi OFF\n\
+• Esvaziar lixeira\n\
+• Atualizar flatpaks\n" 20 58 || return
+
+  (
+    echo "XXX"; echo "A atualizar pacotes..."; echo "XXX"
+    apt-get update -qq 2>/dev/null && apt-get upgrade -y 2>/dev/null
+    echo "XXX"; echo "A limpar sistema..."; echo "XXX"
+    apt-get autoclean -y 2>/dev/null && apt-get autoremove -y 2>/dev/null
+    journalctl --vacuum-size=100M 2>/dev/null
+    echo "XXX"; echo "TRIM no SSD..."; echo "XXX"
+    fstrim -v / 2>/dev/null
+    echo "XXX"; echo "A corrigir pacotes..."; echo "XXX"
+    apt-get install --fix-broken -y 2>/dev/null
+    echo "XXX"; echo "A remover kernels antigos..."; echo "XXX"
+    kernels_cleanup
+    echo "XXX"; echo "A limpar temporários..."; echo "XXX"
+    rm -rf /tmp/* /var/tmp/* 2>/dev/null
+    apt-get clean -y 2>/dev/null
+    echo "XXX"; echo "A configurar WiFi..."; echo "XXX"
+    [ -n "$SSID" ] && nmcli con mod "$SSID" ipv4.dns "1.1.1.1 8.8.8.8" 2>/dev/null
+    [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off 2>/dev/null
+    echo "XXX"; echo "A ativar zram..."; echo "XXX"
+    zramctl 2>/dev/null | grep -q zram || systemctl start dev-zram0.swap 2>/dev/null
+    echo "XXX"; echo "A limpar lixeira..."; echo "XXX"
     rm -rf "$HOME/.local/share/Trash"/* 2>/dev/null
-    msg "✅ Lixeira vazia"
+    echo "XXX"; echo "A atualizar flatpaks..."; echo "XXX"
+    has flatpak && flatpak update -y 2>/dev/null
+    echo "XXX"; echo "Concluído!"; echo "XXX"
+  ) | whiptail --title "🏁 Auto-Pilot" --gauge "A executar..." 8 60 0
+  msg "✅ Auto-Pilot concluído!"
+}
+
+# ════════════════════════════════════════════
+#   🔒  SEGURANÇA E UTILIZADORES
+# ════════════════════════════════════════════
+sub_seguranca() {
+  while true; do
+    CHOICE=$(whiptail --title "$TITLE — 🔒 Segurança" --menu "
+  ┌─ Segurança e Utilizadores ───────────┐
+  │                                    │
+  │  Escolha uma opção:                │
+  └────────────────────────────────────┘
+" 15 58 3 \
+      "1" "🔐  Segurança (SSH, sudo, portas)" \
+      "2" "👥  Utilizadores (logins, cron)" \
+      "0" "⬅  Voltar" 3>&1 1>&2 2>&3)
+
+    case $CHOICE in
+      1) seguranca_info ;;
+      2) utilizadores_info ;;
+      0|"") return ;;
+    esac
+  done
+}
+
+seguranca_info() {
+  local out
+  out=$(
+    section "LOGINS SSH FALHADOS"
+    journalctl -u sshd -n 20 --no-pager 2>/dev/null | grep -i "failed\|invalid" | tail -10
+    section "COMANDOS SUDO"
+    journalctl -u sudo -n 15 --no-pager 2>/dev/null | tail -10
+    section "PORTAS ABERTAS (>10000)"
+    ss -tupn 2>/dev/null | awk 'NR>1 && $1~/tcp/{
+      split($5,a,":"); port=a[length(a)];
+      if(port+0>10000) print port, $1, $6
+    }' | head -15
+    section "ÚLTIMOS LOGINS"
+    last -10 2>/dev/null | head -10
+  )
+  show "🔐 Segurança" "$out"
+}
+
+utilizadores_info() {
+  local out
+  out=$(
+    section "QUEM ESTÁ LOGADO"
+    w -h || echo "(n/a)"
+    section "ÚLTIMOS LOGINS"
+    last -20 2>/dev/null || echo "(n/a)"
+    section "REBOOTS"
+    last reboot -10 2>/dev/null
+    section "CRON JOBS (utilizadores)"
+    for u in $(cut -d: -f1 /etc/passwd | head -10); do
+      crontab -u "$u" -l 2>/dev/null | grep -v "^#" | grep -v "^$" | sed "s/^/  $u: /"
+    done
+    section "CRON JOBS (sistema)"
+    ls /etc/cron.d/ /etc/cron.hourly/ /etc/cron.daily/ 2>/dev/null | head -15 | sed 's/^/  /'
+  )
+  show "👥 Utilizadores" "$out"
+}
+
+# ════════════════════════════════════════════
+#   🐳  EXTRAS
+# ════════════════════════════════════════════
+sub_extras() {
+  while true; do
+    CHOICE=$(whiptail --title "$TITLE — 🐳 Extras" --menu "
+  ┌─ Extras ──────────────────────────────┐
+  │                                    │
+  │  Escolha uma opção:                │
+  └────────────────────────────────────┘
+" 14 58 2 \
+      "1" "🐳  Contentores (Docker / Flatpak)" \
+      "0" "⬅  Voltar" 3>&1 1>&2 2>&3)
+
+    case $CHOICE in
+      1) contentores_info ;;
+      0|"") return ;;
+    esac
+  done
+}
+
+contentores_info() {
+  local out=""
+  if has docker; then
+    out+=$(echo "────  DOCKER  ────"
+      echo "Serviço: $(systemctl is-active docker 2>/dev/null)"
+      echo "Contentores ativos: $(docker ps -q 2>/dev/null | wc -l)"
+      echo "Contentores totais: $(docker ps -aq 2>/dev/null | wc -l)"
+      echo "Imagens: $(docker images -q 2>/dev/null | wc -l)"
+      [ "$(docker ps -q 2>/dev/null | wc -l)" -gt 0 ] && { echo ""; docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null; })
+  fi
+  if has flatpak; then
+    out+=$(echo "────  FLATPAK  ────"
+      echo "Aplicações:"
+      flatpak list --app 2>/dev/null | awk '{print "  " $1}'
+      echo ""
+      echo "Updates: $(flatpak remote-ls --updates 2>/dev/null | wc -l)")
+  fi
+  [ -z "$out" ] && out="Nenhum contentor ou Flatpak detetado."
+  show "🐳 Contentores" "$out"
+
+  if has flatpak && whiptail --title "Flatpak" --yesno "Atualizar flatpaks?" 8 50; then
+    flatpak update -y 2>/dev/null && msg "✅ Flatpaks atualizados"
+  fi
+  if has docker && whiptail --title "Docker" --yesno "Limpar contentores parados e imagens não usadas?" 8 60; then
+    docker container prune -f 2>/dev/null && docker image prune -f 2>/dev/null && msg "✅ Docker limpo"
   fi
 }
 
-# ── 13 ───────────────────────────────────────
+# ════════════════════════════════════════════
+#   🔄  GESTÃO DE SERVIÇOS
+# ════════════════════════════════════════════
+servicos_manager() {
+  while true; do
+    local running
+    running=$(systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | \
+      awk '{print $1}' | head -20 | paste -sd ' ' -)
+    CHOICE=$(whiptail --title "🔄 Serviços" --menu "Ativos: $running" 18 72 5 \
+      "1" "Listar serviços ativos" \
+      "2" "Listar serviços enabled (auto-start)" \
+      "3" "Iniciar / Parar / Reiniciar" \
+      "4" "Ativar / Desativar (auto-start)" \
+      "0" "Voltar" 3>&1 1>&2 2>&3)
+    case $CHOICE in
+      1) show "Ativos" "$(systemctl list-units --type=service --state=running --no-pager 2>/dev/null)" ;;
+      2) show "Enabled" "$(systemctl list-unit-files --type=service --state=enabled --no-pager 2>/dev/null)" ;;
+      3) local svc
+         svc=$(whiptail --inputbox "Nome do serviço (ex: sshd):" 8 60 3>&1 1>&2 2>&3)
+         [ -z "$svc" ] && continue
+         ACTION=$(whiptail --menu "$svc — O que fazer?" 12 50 3 \
+           "1" "Iniciar" "2" "Parar" "3" "Reiniciar" 3>&1 1>&2 2>&3)
+         case $ACTION in
+           1) systemctl start "$svc" 2>/dev/null && msg "✅ $svc iniciado" || msg "❌ Erro" ;;
+           2) systemctl stop "$svc" 2>/dev/null && msg "✅ $svc parado" || msg "❌ Erro" ;;
+           3) systemctl restart "$svc" 2>/dev/null && msg "✅ $svc reiniciado" || msg "❌ Erro" ;;
+         esac ;;
+      4) local svc2
+         svc2=$(whiptail --inputbox "Nome do serviço:" 8 60 3>&1 1>&2 2>&3)
+         [ -z "$svc2" ] && continue
+         ACTION2=$(whiptail --menu "$svc2" 12 50 2 \
+           "1" "Ativar (enable)" "2" "Desativar (disable)" 3>&1 1>&2 2>&3)
+         case $ACTION2 in
+           1) systemctl enable "$svc2" 2>/dev/null && msg "✅ $svc2 ativado" || msg "❌ Erro" ;;
+           2) systemctl disable "$svc2" 2>/dev/null && msg "✅ $svc2 desativado" || msg "❌ Erro" ;;
+         esac ;;
+      0|"") return ;;
+    esac
+  done
+}
+
+# ════════════════════════════════════════════
+#   📋  EXPORTAR DIAGNÓSTICO
+# ════════════════════════════════════════════
 exportar_diag() {
   local out="$HOME/sysmenu-diagnostico-$(date +%Y%m%d-%H%M%S).txt"
-
   whiptail --title "Exportar" --infobox "A gerar diagnóstico..." 3 40
-
   {
     echo "══════════════════════════════════════════════════"
     echo "  🛠  SYS MENU — Diagnóstico do Sistema"
@@ -381,7 +564,7 @@ exportar_diag() {
     echo ""
     echo "── CPU ──"
     grep -m1 "model name" /proc/cpuinfo | cut -d: -f2
-    grep -c ^processor /proc/cpuinfo | xargs printf "Núcleos: %s\n"
+    echo "Núcleos  : $(grep -c ^processor /proc/cpuinfo)"
     echo ""
     echo "── Memória ──"
     free -h
@@ -409,8 +592,8 @@ exportar_diag() {
     zramctl 2>/dev/null || echo "Inativo"
     echo ""
     echo "── Boot ──"
-    systemd-analyze
-    systemd-analyze blame | head -10
+    systemd-analyze 2>/dev/null
+    systemd-analyze blame 2>/dev/null | head -10
     echo ""
     echo "── SMART ──"
     smartctl -H "$DISK" 2>/dev/null
@@ -419,238 +602,14 @@ exportar_diag() {
     echo "── Firewall ──"
     ufw status 2>/dev/null || echo "n/a"
     echo ""
+    echo "── Docker ──"
+    docker ps -a 2>/dev/null || echo "n/a"
+    echo ""
     echo "══════════════════════════════════════════════════"
     echo "  FIM"
   } > "$out"
-
-  whiptail --title "Exportado" --msgbox "Diagnóstico salvo em:\n\n$out\n\nTamanho: $(du -h "$out" | awk '{print $1}')" 12 70
-}
-
-# ── 14 ───────────────────────────────────────
-auto_pilot() {
-  whiptail --title "🏁 Auto-Pilot" --yesno \
-    "Vai executar:\n\n"'
-• apt update & upgrade
-• apt autoclean & autoremove
-• Limpar logs do journal
-• TRIM no SSD
-• Corrigir pacotes quebrados
-• Remover kernels antigos
-• Limpar cache do apt, temp, npm
-• Ativar zram (se inativo)
-• DNS → 1.1.1.1 / 8.8.8.8
-• Power saving WiFi OFF
-• Esvaziar lixeira
-• Atualizar flatpaks
-\nDeseja continuar?' 20 60 || return
-
-  (
-    echo "XXX"; echo "A atualizar pacotes..."; echo "XXX"
-    apt-get update -qq 2>/dev/null && apt-get upgrade -y 2>/dev/null
-    echo "XXX"; echo "A limpar sistema..."; echo "XXX"
-    apt-get autoclean -y 2>/dev/null && apt-get autoremove -y 2>/dev/null
-    journalctl --vacuum-size=100M 2>/dev/null
-    echo "XXX"; echo "TRIM no SSD..."; echo "XXX"
-    fstrim -v / 2>/dev/null
-    echo "XXX"; echo "A corrigir pacotes..."; echo "XXX"
-    apt-get install --fix-broken -y 2>/dev/null
-    echo "XXX"; echo "A remover kernels antigos..."; echo "XXX"
-    kernels_cleanup
-    echo "XXX"; echo "A limpar temporários..."; echo "XXX"
-    rm -rf /tmp/* /var/tmp/* 2>/dev/null
-    rm -rf "$HOME/.npm/_cache" 2>/dev/null
-    apt-get clean -y 2>/dev/null
-    echo "XXX"; echo "A configurar WiFi..."; echo "XXX"
-    [ -n "$SSID" ] && nmcli con mod "$SSID" ipv4.dns "1.1.1.1 8.8.8.8" 2>/dev/null
-    [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off 2>/dev/null
-    echo "XXX"; echo "A ativar zram..."; echo "XXX"
-    zramctl 2>/dev/null | grep -q zram || systemctl start dev-zram0.swap 2>/dev/null
-    echo "XXX"; echo "A limpar lixeira..."; echo "XXX"
-    rm -rf "$HOME/.local/share/Trash"/* 2>/dev/null
-    echo "XXX"; echo "A atualizar flatpaks..."; echo "XXX"
-    has flatpak && flatpak update -y 2>/dev/null
-    echo "XXX"; echo "Concluído!"; echo "XXX"
-  ) | whiptail --title "$TITLE — 🏁 Auto-Pilot" --gauge "A executar..." 8 60 0
-
-  msg "✅ Auto-Pilot concluído!\n\nSistema otimizado e atualizado."
-}
-
-# ── Helper ────────────────────────────────────
-kernels_cleanup() {
-  local curr keep=2 count
-  curr=$(uname -r | sed 's/-[a-z].*//')
-  count=$(dpkg -l linux-image-* 2>/dev/null | awk '/^ii/{print $2}' | wc -l)
-  [ "$count" -le "$keep" ] && return
-  dpkg -l linux-image-* 2>/dev/null | awk '/^ii/{print $2}' | \
-    grep -v "$curr" | head -n -"$keep" | xargs -r apt-get purge -y 2>/dev/null
-  update-grub 2>/dev/null
-}
-
-# ── 15 ───────────────────────────────────────
-seguranca() {
-  local out
-  out=$(echo "────  LOGINS SSH FALHADOS  ────"
-    if [ -f /var/log/auth.log ]; then
-      grep "Failed password" /var/log/auth.log 2>/dev/null | tail -10
-    elif [ -f /var/log/secure ]; then
-      grep "Failed password" /var/log/secure 2>/dev/null | tail -10
-    else
-      journalctl -u sshd -n 20 --no-pager 2>/dev/null | grep -i "failed\|invalid" | tail -10
-    fi
-    echo ""
-    echo "────  ÚLTIMOS LOGINS VIA SUDO  ────"
-    journalctl -u sudo -n 15 --no-pager 2>/dev/null | tail -10
-    echo ""
-    echo "────  UTILIZADORES LOGADOS  ────"
-    w -h
-    echo ""
-    echo "────  PORTAS ABERTAS (todas)  ────"
-    ss -tupn 2>/dev/null | awk 'NR>1 && $1 ~ /tcp/{
-      split($5,a,":"); port=a[length(a)];
-      if(port !~ /^[0-9]+$/) next;
-      if(port>1024 && port<10000) next;
-      print port, $1, $6
-    }' | head -15
-    echo ""
-    echo "────  ÚLTIMAS TENTATIVAS DE LOGIN  ────"
-    last -10 2>/dev/null | head -10)
-  whiptail --title "$TITLE — 🔐 Segurança" --scrolltext --msgbox "$out" 24 80
-}
-
-# ── 16 ───────────────────────────────────────
-contentores() {
-  local out=""
-  if has docker; then
-    out+=$(echo "────  DOCKER  ────"
-      echo "Serviço: $(systemctl is-active docker 2>/dev/null)"
-      echo "Contentores ativos: $(docker ps -q 2>/dev/null | wc -l)"
-      echo "Contentores totais: $(docker ps -aq 2>/dev/null | wc -l)"
-      echo "Imagens: $(docker images -q 2>/dev/null | wc -l)"
-      [ "$(docker ps -q 2>/dev/null | wc -l)" -gt 0 ] && \
-        { echo ""; docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null; }
-      echo "")
-  fi
-  if has flatpak; then
-    out+=$(echo "────  FLATPAK  ────"
-      echo "Aplicações instaladas:"
-      flatpak list --app 2>/dev/null | awk '{print "  " $1}'
-      echo ""
-      UPD=$(flatpak update --app 2>/dev/null | grep -c "id.")
-      echo "Atualizações disponíveis: $UPD")
-  fi
-  if [ -z "$out" ]; then
-    out="Nenhum contentor (Docker) ou Flatpak detetado."
-  fi
-  whiptail --title "$TITLE — 🐳 Contentores" --scrolltext --msgbox "$out" 24 70
-
-  if has flatpak; then
-    if whiptail --title "Flatpak" --yesno "Atualizar todos os flatpaks?" 8 50; then
-      flatpak update -y 2>/dev/null
-      msg "✅ Flatpaks atualizados"
-    fi
-  fi
-  if has docker; then
-    if whiptail --title "Docker" --yesno "Limpar contentores parados e imagens não usadas?" 8 60; then
-      docker container prune -f 2>/dev/null
-      docker image prune -f 2>/dev/null
-      msg "✅ Docker limpo"
-    fi
-  fi
-}
-
-# ── 17 ───────────────────────────────────────
-limpeza_profunda() {
-  CHOICE=$(whiptail --title "$TITLE — 🧼 Limpeza profunda" --menu "\nEscolha:" 18 62 7 \
-    "1" "Remover kernels antigos (mantém 2 últimos)" \
-    "2" "Limpar /tmp e /var/tmp" \
-    "3" "Limpar cache do apt (clean)" \
-    "4" "Limpar cache do utilizador (~/.cache)" \
-    "5" "Limpar logs do journal (mínimo)" \
-    "6" "Esvaziar lixeira" \
-    "0" "Voltar" 3>&1 1>&2 2>&3)
-
-  case $CHOICE in
-    1) kernels_cleanup
-       msg "✅ Kernels antigos removidos" ;;
-    2) rm -rf /tmp/* /var/tmp/* 2>/dev/null
-       msg "✅ /tmp e /var/tmp limpos" ;;
-    3) apt-get clean -y 2>/dev/null
-       msg "✅ Cache do apt limpo" ;;
-    4) rm -rf "$HOME/.cache/"* 2>/dev/null
-       msg "✅ Cache de utilizador limpo" ;;
-    5) journalctl --vacuum-time=7d 2>/dev/null
-       msg "✅ Logs com mais de 7 dias removidos" ;;
-    6) rm -rf "$HOME/.local/share/Trash"/* 2>/dev/null
-       msg "✅ Lixeira vazia" ;;
-  esac
-}
-
-# ── 18 ───────────────────────────────────────
-utilizadores() {
-  local out
-  out=$(echo "────  QUEM ESTÁ LOGADO  ────"
-    w -h || echo "(n/a)"
-    echo ""
-    echo "────  ÚLTIMOS LOGINS  ────"
-    last -20 2>/dev/null || echo "(n/a)"
-    echo ""
-    echo "────  HISTÓRICO DE REBOOTS  ────"
-    last reboot -10 2>/dev/null
-    echo ""
-    echo "────  CRON JOBS (utilizadores)  ────"
-    for u in $(cut -d: -f1 /etc/passwd); do
-      crontab -u "$u" -l 2>/dev/null | grep -v "^#" | grep -v "^$" | \
-        sed "s/^/  $u: /"
-    done
-    echo ""
-    echo "────  CRON JOBS (sistema)  ────"
-    ls /etc/cron.d/ /etc/cron.hourly/ /etc/cron.daily/ 2>/dev/null | head -15 | sed 's/^/  /')
-  whiptail --title "$TITLE — 👥 Utilizadores" --scrolltext --msgbox "$out" 24 80
-}
-
-# ── 19 ───────────────────────────────────────
-servicos_manager() {
-  while true; do
-    local running
-    running=$(systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | \
-      awk '{print $1}' | head -25 | paste -sd ' ' -)
-
-    CHOICE=$(whiptail --title "$TITLE — 🔄 Serviços" --menu \
-      "Serviços ativos:\n$running\n" 20 72 5 \
-      "1" "Listar todos os serviços ativos" \
-      "2" "Listar serviços enabled (auto-start)" \
-      "3" "Iniciar / Parar / Reiniciar um serviço" \
-      "4" "Ativar / Desativar um serviço (auto-start)" \
-      "0" "Voltar" 3>&1 1>&2 2>&3)
-
-    case $CHOICE in
-      1) whiptail --title "Serviços ativos" --scrolltext \
-           --msgbox "$(systemctl list-units --type=service --state=running --no-pager 2>/dev/null)" 24 80 ;;
-      2) whiptail --title "Serviços enabled" --scrolltext \
-           --msgbox "$(systemctl list-unit-files --type=service --state=enabled --no-pager 2>/dev/null)" 24 80 ;;
-      3) local svc
-         svc=$(whiptail --title "Serviço" --inputbox "Nome do serviço (ex: sshd):" 8 60 3>&1 1>&2 2>&3)
-         [ -z "$svc" ] && continue
-         ACTION=$(whiptail --title "$svc" --menu "O que fazer com $svc?" 12 50 3 \
-           "1" "Iniciar" "2" "Parar" "3" "Reiniciar" 3>&1 1>&2 2>&3)
-         case $ACTION in
-           1) systemctl start "$svc" 2>/dev/null && msg "✅ $svc iniciado" || msg "❌ Falha ao iniciar $svc" ;;
-           2) systemctl stop "$svc" 2>/dev/null && msg "✅ $svc parado" || msg "❌ Falha ao parar $svc" ;;
-           3) systemctl restart "$svc" 2>/dev/null && msg "✅ $svc reiniciado" || msg "❌ Falha ao reiniciar $svc" ;;
-         esac ;;
-      4) local svc2
-         svc2=$(whiptail --title "Serviço" --inputbox "Nome do serviço (ex: bluetooth):" 8 60 3>&1 1>&2 2>&3)
-         [ -z "$svc2" ] && continue
-         ACTION2=$(whiptail --title "$svc2" --menu "O que fazer?" 12 50 2 \
-           "1" "Ativar (enable)" "2" "Desativar (disable)" 3>&1 1>&2 2>&3)
-         case $ACTION2 in
-           1) systemctl enable "$svc2" 2>/dev/null && msg "✅ $svc2 ativado (auto-start)" || msg "❌ Falha" ;;
-           2) systemctl disable "$svc2" 2>/dev/null && msg "✅ $svc2 desativado" || msg "❌ Falha" ;;
-         esac ;;
-      0|"") return ;;
-    esac
-  done
+  whiptail --title "Exportado" --msgbox "Diagnóstico salvo em:\n\n$out\n\n$(du -h "$out" | awk '{print $1}')" 12 70
 }
 
 # ── START ────────────────────────────────────
-main_menu
+menu_tree
