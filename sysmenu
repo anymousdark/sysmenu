@@ -5,7 +5,7 @@ Diagnóstico + otimização do sistema multi-distro
 https://github.com/anymousdark/sysmenu
 """
 
-import os, sys, subprocess, shutil, time
+import os, sys, subprocess, shutil, time, stat
 from dataclasses import dataclass
 from typing import Optional
 
@@ -646,4 +646,30 @@ def main():
             time.sleep(1)
 
 if __name__ == '__main__':
-    main()
+    if os.geteuid() != 0:
+        # Check if installed globally; if not, offer to install
+        sp = os.path.abspath(sys.argv[0])
+        tp = "/usr/local/bin/sysmenu"
+        if not (sp == tp or (os.path.exists(tp) and os.path.samefile(sp, tp)) or shutil.which("sysmenu")):
+            print(f"\n  {C['y']}⚠  sysmenu não está instalado globalmente.{C['n']}")
+            print(f"     A executar de: {C['B']}{sp}{C['n']}")
+            resp = input(f"  {C['y']}?{C['n']} Instalar em /usr/local/bin? (s/N): ").strip().lower()
+            if resp in ('s', 'y', 'sim', 'yes'):
+                import getpass
+                pwd = getpass.getpass(f"  {C['d']}Password sudo:{C['n']} ")
+                r = os.system(f"echo '{pwd}' | sudo -S cp '{sp}' /usr/local/bin/sysmenu 2>/dev/null && sudo chmod +x /usr/local/bin/sysmenu")
+                if r == 0:
+                    print(f"\n  {C['g']}✅ Instalado! Agora executa: sysmenu{C['n']}\n")
+                else:
+                    print(f"\n  {C['r']}❌ Erro. Tenta: sudo cp sysmenu /usr/local/bin/{C['n']}\n")
+        os.execvp('sudo', ['sudo', sys.executable] + sys.argv)
+    else:
+        # Running as root — auto-install if from source
+        sp = os.path.abspath(sys.argv[0])
+        tp = "/usr/local/bin/sysmenu"
+        if sp != tp and not (os.path.exists(tp) and os.path.samefile(sp, tp)):
+            try:
+                subprocess.run(f"cp '{sp}' {tp} && chmod +x {tp}", shell=True, check=True)
+            except:
+                pass
+        main()
