@@ -39,13 +39,30 @@ detect()
 
 def has(c): return shutil.which(c) is not None
 
-def run(cmd, root=False, t=120):
+def run(cmd, root=False, t=120, nowait=False):
     if root and os.geteuid()!=0: cmd = f"sudo sh -c '{cmd}'"
+    if root and not nowait: wait_apt()
     try: return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=t).stdout + subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=t).stderr
     except: return ""
 
+def wait_apt():
+    if D.pkg != 'apt-get': return
+    for _ in range(30):
+        l = run("lsof -t /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null | head -3").strip()
+        if not l: return
+        pids = l.split()
+        proc = run(f"ps -p {','.join(pids)} -o pid=,args= 2>/dev/null").strip()
+        print(f"\n  {C['y']}⏳ Lock apt: PID {proc}{C['n']}")
+        if confirm("Matar processo?"):
+            for p in pids: run(f"kill -9 {p} 2>/dev/null", root=True, nowait=True); time.sleep(0.5)
+            run("rm -f /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null", root=True, nowait=True)
+            return
+        time.sleep(2)
+    print(f"  {C['r']}✗ Lock apt não libertado{C['n']}")
+
 def run_live(cmd, root=False):
     if root and os.geteuid()!=0: cmd = f"sudo sh -c '{cmd}'"
+    if root: wait_apt()
     try:
         p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for l in p.stdout: print(f"  {l}", end='', flush=True)
