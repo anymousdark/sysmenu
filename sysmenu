@@ -1,435 +1,371 @@
 #!/usr/bin/env bash
 
 # ──────────────────────────────────────────────
-#   🛠  SYS MENU — v2.0
+#   🛠  SYS MENU — v3.0
 #   Diagnóstico + otimização do sistema
 #   https://github.com/anymousdark/sysmenu
 # ──────────────────────────────────────────────
 
-RED='\033[1;31m'; GREEN='\033[1;32m'; YELLOW='\033[1;33m'
-BLUE='\033[1;34m'; CYAN='\033[1;36m'; NC='\033[0m'; BOLD='\033[1m'
+# ── Auto-elevação para root ──────────────────
+[ "$(id -u)" -ne 0 ] && exec sudo "$0" "$@"
 
+# ── Config ────────────────────────────────────
+TITLE="🛠  Sys Menu  —  v3.0"
 WIFI=$(iw dev 2>/dev/null | awk '/Interface/{print $2}')
 SSID=$(nmcli -t -f NAME con show --active 2>/dev/null | head -1)
 DISK="/dev/sda"
 [ ! -b "$DISK" ] && DISK="/dev/$(lsblk -ndo NAME 2>/dev/null | head -1)"
 
-header() {
-  clear
-  echo -e "${CYAN}┌──────────────────────────────────────────────┐${NC}"
-  echo -e "${CYAN}│${NC}          ${BOLD}🛠  SYS MENU${NC}                       ${CYAN}│${NC}"
-  echo -e "${CYAN}└──────────────────────────────────────────────┘${NC}"
-  echo ""
-}
+export TERM=${TERM:-xterm-256color}
 
-menu() {
-  header
-  echo -e "${BOLD}Escolha uma opção:${NC}\n"
-  echo -e "  ${GREEN}1${NC}) 🔍  Diagnóstico completo"
-  echo -e "  ${GREEN}2${NC}) 📶  WiFi - diagnóstico e otimização"
-  echo -e "  ${GREEN}3${NC}) 💾  Zram"
-  echo -e "  ${GREEN}4${NC}) 🛠   Serviços com falha"
-  echo -e "  ${GREEN}5${NC}) 💽  Saúde do disco (SMART)"
-  echo -e "  ${GREEN}6${NC}) 🌡  Temperaturas / sensores"
-  echo -e "  ${GREEN}7${NC}) 📊  Memória e CPU"
-  echo -e "  ${GREEN}8${NC}) 📝  Logs do sistema"
-  echo -e "  ${GREEN}9${NC}) ⚡  Hardware (CPU/GPU)"
-  echo -e "  ${GREEN}10${NC}) 🌐  Rede (portas, firewall, ping)"
-  echo -e "  ${GREEN}11${NC}) 🧹  Manutenção (update, limpeza)"
-  echo -e "  ${GREEN}12${NC}) 📁  Espaço em disco (top pastas)"
-  echo -e "  ${GREEN}13${NC}) 📋  Exportar diagnóstico para ficheiro"
-  echo -e "  ${GREEN}0${NC}) ❌  Sair\n"
-  read -p "Opção: " opt
-  case $opt in
-    1) diag_completo ;;
-    2) wifi_menu ;;
-    3) zram_menu ;;
-    4) servicos_falha ;;
-    5) disk_smart  ;;
-    6) temperaturas ;;
-    7) mem_cpu      ;;
-    8) logs_sistema ;;
-    9) hardware_info ;;
-   10) rede_menu ;;
-   11) manutencao ;;
-   12) espaco_disco ;;
-   13) exportar_diag ;;
-    0) echo -e "${GREEN}Bye!${NC}"; exit 0 ;;
-    *) echo -e "${RED}Opção inválida!${NC}"; sleep 1; menu ;;
-  esac
-}
-
-# ── Utilitários ──────────────────────────────
 has() { command -v "$1" &>/dev/null; }
 
-div() { echo -e "${YELLOW}$1${NC}"; }
+msg()  { whiptail --title "$TITLE" --msgbox "$1" 20 70; }
+
+# ── Menu principal ───────────────────────────
+main_menu() {
+  while true; do
+    CHOICE=$(whiptail --title "$TITLE" --menu "\nEscolha uma opção:" 22 72 14 \
+      "1"  "🔍  Diagnóstico completo" \
+      "2"  "📶  WiFi — diagnóstico e otimização" \
+      "3"  "💾  Zram — status e ativação" \
+      "4"  "🛠   Serviços com falha" \
+      "5"  "💽  Saúde do disco (SMART)" \
+      "6"  "🌡   Temperaturas / sensores" \
+      "7"  "📊  Memória e CPU" \
+      "8"  "📝  Logs do sistema" \
+      "9"  "⚡  Hardware (CPU/GPU/boot)" \
+      "10" "🌐  Rede (portas, firewall, ping)" \
+      "11" "🧹  Manutenção (update, limpeza)" \
+      "12" "📁  Espaço em disco" \
+      "13" "📋  Exportar diagnóstico" \
+      "14" "🏁  Auto-pilot (tudo de uma vez)" \
+      "0"  "❌  Sair" 3>&1 1>&2 2>&3)
+
+    case $CHOICE in
+      "")  echo "Bye!"; exit 0 ;;
+      1)   diag_completo ;;
+      2)   wifi_menu ;;
+      3)   zram_menu ;;
+      4)   servicos_falha ;;
+      5)   disk_smart ;;
+      6)   temperaturas ;;
+      7)   mem_cpu ;;
+      8)   logs_sistema ;;
+      9)   hardware_info ;;
+      10)  rede_menu ;;
+      11)  manutencao ;;
+      12)  espaco_disco ;;
+      13)  exportar_diag ;;
+      14)  auto_pilot ;;
+      0)   echo "Bye!"; exit 0 ;;
+    esac
+  done
+}
+
+# ── Helpers ──────────────────────────────────
+section() {
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "  $1"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+capture() {
+  local cmd="$*"
+  eval "$cmd" 2>/dev/null || echo "(comando não disponível)"
+}
+
+show_output() {
+  local label="$1"
+  shift
+  local out
+  out=$("$@" 2>/dev/null)
+  whiptail --title "$TITLE — $label" --scrolltext --msgbox "$out" 24 80
+}
 
 # ── 1 ────────────────────────────────────────
 diag_completo() {
-  header
-  echo -e "${BOLD}🔍 DIAGNÓSTICO COMPLETO${NC}\n"
+  {
+    section "SISTEMA"
+    echo "Hostname : $(hostname)"
+    echo "Kernel   : $(uname -r)"
+    echo "OS       : $(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')"
+    echo "Uptime   : $(uptime -p | sed 's/up //')"
+    echo "Load     : $(cat /proc/loadavg | cut -d' ' -f1-3)"
 
-  div "── Sistema ──"
-  printf "  Hostname : %s\n" "$(hostname)"
-  printf "  Kernel   : %s\n" "$(uname -r)"
-  printf "  Uptime   : %s\n" "$(uptime -p | sed 's/up //')"
-  printf "  Load     : %s\n" "$(cat /proc/loadavg | cut -d' ' -f1-3)"
-  printf "  OS       : %s\n" "$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')"
-  echo ""
+    section "CPU"
+    grep -m1 "model name" /proc/cpuinfo | cut -d: -f2
+    echo "Núcleos  : $(grep -c ^processor /proc/cpuinfo)"
 
-  div "── CPU ──"
-  grep -m1 "model name" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^/  /'
-  grep -c ^processor /proc/cpuinfo 2>/dev/null | xargs printf "  Núcleos  : %s\n"
-  echo ""
+    section "MEMÓRIA"
+    free -h | awk 'NR==1{printf "%-8s %8s %8s %8s\n",$1,$2,$3,$4} NR==2{printf "%-8s %8s %8s %8s\n",$1,$2,$3,$4}'
 
-  div "── Memória ──"
-  free -h | awk 'NR==1{printf "  %-8s %8s %8s %8s\n",$1,$2,$3,$4} NR==2{printf "  %-8s %8s %8s %8s\n",$1,$2,$3,$4}'
-  echo ""
+    section "DISCO"
+    df -h / | awk 'NR==2{printf "%s — %s de %s (%s livres)\n",$1,$3,$2,$4}'
 
-  div "── Disco ──"
-  df -h / | awk 'NR==2{printf "  %s — %s de %s usados (%s livres)\n",$1,$3,$2,$4}'
-  echo ""
+    section "TEMPERATURAS"
+    capture sensors
 
-  div "── Temperaturas ──"
-  sensors 2>/dev/null | grep -E "Core|Package|temp1|Composite|Tctl" | head -5 | sed 's/^/  /'
-  echo ""
+    section "GPU"
+    if has nvidia-smi; then
+      nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu --format=csv,noheader
+    else
+      lspci | grep -iE "vga|3d|display" | cut -d: -f3-
+    fi
 
-  div "── GPU ──"
-  if has nvidia-smi; then
-    nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu --format=csv,noheader 2>/dev/null | sed 's/^/  /'
-  elif has glxinfo; then
-    glxinfo -B 2>/dev/null | grep -i "device\|renderer" | head -2 | sed 's/^/  /'
-  else
-    lspci 2>/dev/null | grep -i vga | cut -d: -f3 | sed 's/^/  /'
-  fi
-  echo ""
+    section "WIFI"
+    if [ -n "$WIFI" ]; then
+      iw dev "$WIFI" link
+      iw dev "$WIFI" station dump | grep signal
+    else
+      echo "(sem interface WiFi)"
+    fi
 
-  div "── WiFi ──"
-  if [ -n "$WIFI" ]; then
-    iw dev "$WIFI" link 2>/dev/null | sed 's/^/  /'
-    iw dev "$WIFI" station dump 2>/dev/null | awk '/signal:/{printf "  Sinal : %s %s\n",$2,$3}'
-  else
-    echo "  (sem interface WiFi)"
-  fi
+    section "PORTAS A ESCUTAR"
+    ss -tlnp | awk 'NR>1{print $5, $1}' | head -15
 
-  div "── Portas a escutar ──"
-  ss -tlnp 2>/dev/null | awk 'NR>1{printf "  %s %s %s\n",$1,$5,$6}' | head -10 | sed 's/  //'
-  echo ""
+    section "SERVIÇOS COM FALHA"
+    systemctl --failed | grep "loaded failed" || echo "Nenhum"
 
-  div "── Serviços com falha ──"
-  if systemctl --failed 2>/dev/null | grep -q "failed"; then
-    systemctl --failed 2>/dev/null | grep "loaded failed" | sed 's/^/  /'
-  else
-    echo "  Nenhum"
-  fi
+    section "ZRAM"
+    zramctl || echo "Inativo"
 
-  div "── Zram ──"
-  if zramctl 2>/dev/null | grep -q zram; then
-    zramctl | awk 'NR>1{printf "  %s — %s, compressão %s\n",$1,$4,$2}'
-  else
-    echo "  Inativo"
-  fi
-  echo ""
+    section "BOOT"
+    systemd-analyze
+    echo ""
+    echo "Serviços mais lentos:"
+    systemd-analyze blame | head -5
+  } > /tmp/sysmenu-diag.txt
 
-  div "── Análise de boot ──"
-  if has systemd-analyze; then
-    echo "  $(systemd-analyze 2>/dev/null | sed 's/Startup finished in//')"
-    systemd-analyze blame 2>/dev/null | head -5 | sed 's/^/  /'
-  fi
-  echo ""
-
-  read -p "Prima Enter para voltar..."
-  menu
+  whiptail --title "$TITLE — Diagnóstico Completo" --scrolltext \
+    --msgbox "$(cat /tmp/sysmenu-diag.txt)" 24 80
 }
 
 # ── 2 ────────────────────────────────────────
 wifi_menu() {
+  [ -z "$WIFI" ] && { msg "Sem interface WiFi detectada."; return; }
+
   while true; do
-    header
-    echo -e "${BOLD}📶 WiFi${NC}\n"
-    [ -z "$WIFI" ] && { echo -e "${RED}Sem interface WiFi${NC}"; read -p "Enter..."; menu; return; }
+    local info
+    info=$(echo "Interface: $WIFI"; iw dev "$WIFI" link 2>/dev/null; \
+           iw dev "$WIFI" station dump 2>/dev/null | grep -E "signal:|bitrate:|retries:|connected time:")
 
-    div "── Conexão ──"
-    iw dev "$WIFI" link 2>/dev/null | sed 's/^/  /'
-    echo ""
-    iw dev "$WIFI" station dump 2>/dev/null | awk '
-      /signal:/{printf "  Sinal      : %s dBm\n",$2}
-      /tx bitrate/{printf "  TX bitrate : %s %s\n",$3,$4}
-      /rx bitrate/{printf "  RX bitrate : %s %s\n",$3,$4}
-      /tx retries/{printf "  TX retries : %s\n",$3}
-      /connected time/{printf "  Conectado  : %ss\n",$3}
-    '
+    CHOICE=$(whiptail --title "$TITLE — 📶 WiFi" --menu "$info" 20 72 5 \
+      "1" "DNS → Cloudflare/Google" \
+      "2" "Desligar power saving" \
+      "3" "Escanear redes" \
+      "0" "Voltar" 3>&1 1>&2 2>&3)
 
-    div "── Redes por perto ──"
-    nmcli dev wifi list 2>/dev/null | head -12 | sed 's/^/  /'
-
-    echo -e "\n${BOLD}Opções:${NC}"
-    echo "  1) DNS → Cloudflare/Google"
-    echo "  2) Desligar power saving"
-    echo "  3) Escanear redes"
-    echo "  0) Voltar"
-    read -p $'\nOpção: ' w
-    case $w in
+    case $CHOICE in
       1) nmcli con mod "$SSID" ipv4.dns "1.1.1.1 8.8.8.8"
          nmcli con down "$SSID" 2>/dev/null && nmcli con up "$SSID" 2>/dev/null
-         echo -e "${GREEN}DNS alterado ✓${NC}" ;;
-      2) pkexec iw dev "$WIFI" set power_save off 2>/dev/null
-         echo -e "${GREEN}Power saving desligado ✓${NC}" ;;
-      3) nmcli dev wifi rescan && echo -e "${GREEN}Scan concluído ✓${NC}" ;;
-      0) return ;;
+         msg "DNS alterado para 1.1.1.1 e 8.8.8.8 ✓" ;;
+      2) iw dev "$WIFI" set power_save off
+         msg "Power saving desligado ✓" ;;
+      3) nmcli dev wifi rescan
+         msg "Scan concluído. Use 'nmcli dev wifi list' para ver as redes." ;;
+      0|"") return ;;
     esac
-    read -p "Enter..."
   done
 }
 
 # ── 3 ────────────────────────────────────────
 zram_menu() {
-  header
-  echo -e "${BOLD}💾 Zram${NC}\n"
+  local status
   if zramctl 2>/dev/null | grep -q zram; then
-    echo -e "${GREEN}✅ Ativo${NC}"
-    zramctl | sed 's/^/  /'
-    echo ""
-    swapon --show 2>/dev/null | sed 's/^/  /'
+    status=$(zramctl; echo ""; swapon --show)
+    whiptail --title "$TITLE — 💾 Zram" --scrolltext --msgbox "$status" 20 70
   else
-    echo -e "${RED}❌ Inativo${NC}"
-    read -p $'\nAtivar agora? (s/N): ' a
-    [[ "$a" =~ ^[Ss]$ ]] && pkexec systemctl start dev-zram0.swap 2>/dev/null && \
-      { echo -e "${GREEN}Ativado!${NC}"; zramctl | sed 's/^/  /'; } || \
-      echo -e "${RED}Falha — systemd-zram-generator instalado?${NC}"
+    if whiptail --title "$TITLE — 💾 Zram" --yesno "Zram está inativo.\n\nAtivar agora?" 10 50; then
+      systemctl start dev-zram0.swap 2>/dev/null
+      if zramctl | grep -q zram; then
+        msg "✅ Zram ativado com sucesso!"
+      else
+        msg "❌ Falha. systemd-zram-generator instalado?"
+      fi
+    fi
   fi
-  read -p $'\nEnter...'; menu
 }
 
 # ── 4 ────────────────────────────────────────
 servicos_falha() {
-  header
-  echo -e "${BOLD}🛠  Serviços com falha${NC}\n"
-  if systemctl --failed 2>/dev/null | grep -q "failed"; then
-    systemctl --failed 2>/dev/null
-    read -p $'\nDesativar o serviço com falha? (s/N): ' a
-    if [[ "$a" =~ ^[Ss]$ ]]; then
-      UNIT=$(systemctl --failed 2>/dev/null | awk '/loaded failed/{print $1}')
-      [ -n "$UNIT" ] && pkexec systemctl disable --now "$UNIT" 2>/dev/null && \
-        echo -e "${GREEN}$UNIT desativado ✓${NC}"
-    fi
-  else
-    echo -e "${GREEN}Nenhum${NC}"
+  local failed
+  failed=$(systemctl --failed 2>/dev/null)
+  if ! echo "$failed" | grep -q "failed"; then
+    msg "✅ Nenhum serviço com falha."
+    return
   fi
-  read -p $'\nEnter...'; menu
+
+  whiptail --title "$TITLE — 🛠 Serviços com falha" --scrolltext --msgbox "$failed" 20 70
+
+  if whiptail --title "Confirmar" --yesno "Desativar o serviço com falha?" 8 50; then
+    local unit
+    unit=$(echo "$failed" | awk '/loaded failed/{print $1}')
+    [ -n "$unit" ] && systemctl disable --now "$unit" 2>/dev/null && msg "✅ $unit desativado"
+  fi
 }
 
 # ── 5 ────────────────────────────────────────
 disk_smart() {
-  header
-  echo -e "${BOLD}💽 Disco${NC}\n"
-  MODEL=$(pkexec smartctl -i "$DISK" 2>/dev/null | grep "Device Model" | cut -d: -f2 | xargs)
-  HEALTH=$(pkexec smartctl -H "$DISK" 2>/dev/null | grep "SMART overall-health" | cut -d: -f2 | xargs)
-  TEMP=$(pkexec smartctl -A "$DISK" 2>/dev/null | awk '/Temperature_Celsius/{print $10}')
-  echo -e "  Modelo      : ${BOLD}$MODEL${NC}"
-  echo -e "  Saúde       : $(echo "$HEALTH" | sed 's/PASSED/✅ PASSED/; s/FAILED/❌ FAILED/')"
-  echo -e "  Temperatura : ${TEMP:-N/A}°C"
-  echo ""
-  div "── Atributos SMART ──"
-  pkexec smartctl -A "$DISK" 2>/dev/null | sed -n '8,25p' | sed 's/^/  /'
-  read -p $'\nExecutar teste short? (s/N): ' a
-  [[ "$a" =~ ^[Ss]$ ]] && pkexec smartctl -t short "$DISK" 2>/dev/null && \
-    echo -e "${GREEN}Teste iniciado! smartctl -l selftest $DISK p/ ver resultado${NC}"
-  read -p $'\nEnter...'; menu
+  local model health temp attrib
+  model=$(smartctl -i "$DISK" 2>/dev/null | grep "Device Model" | cut -d: -f2 | xargs)
+  health=$(smartctl -H "$DISK" 2>/dev/null | grep "SMART overall-health" | cut -d: -f2 | xargs)
+  temp=$(smartctl -A "$DISK" 2>/dev/null | awk '/Temperature_Celsius/{print $10}')
+  attrib=$(smartctl -A "$DISK" 2>/dev/null | sed -n '7,25p')
+
+  local out
+  out="Modelo: $model\nSaúde: $health\nTemperatura: ${temp:-N/A}°C\n\nSMART Attributes:\n$attrib"
+
+  whiptail --title "$TITLE — 💽 Disco" --scrolltext --msgbox "$out" 20 70
+
+  if whiptail --title "Teste SMART" --yesno "Executar teste rápido (short)?" 8 50; then
+    smartctl -t short "$DISK" 2>/dev/null
+    msg "✅ Teste iniciado!\n\nVerifique depois com:\n  smartctl -l selftest $DISK"
+  fi
 }
 
 # ── 6 ────────────────────────────────────────
 temperaturas() {
-  header
-  echo -e "${BOLD}🌡  Temperaturas${NC}\n"
-  sensors 2>/dev/null | sed 's/^/  /'
-  [ $? -ne 0 ] && echo -e "${RED}lm-sensors não instalado${NC}"
-  read -p $'\nEnter...'; menu
+  local out
+  out=$(sensors 2>/dev/null) || out="lm-sensors não disponível"
+  whiptail --title "$TITLE — 🌡 Temperaturas" --scrolltext --msgbox "$out" 20 70
 }
 
 # ── 7 ────────────────────────────────────────
 mem_cpu() {
-  header
-  echo -e "${BOLD}📊 Memória e CPU${NC}\n"
-  div "── Memória ──"
-  free -h | sed 's/^/  /'
-  echo ""
-  div "── Uptime ──"
-  echo "  $(uptime)"
-  echo ""
-  div "── Top CPU ──"
-  ps aux --sort=-%cpu 2>/dev/null | head -6 | sed 's/^/  /'
-  echo ""
-  div "── Top RAM ──"
-  ps aux --sort=-%mem 2>/dev/null | head -6 | sed 's/^/  /'
-  read -p $'\nEnter...'; menu
+  local out
+  out=$(echo "── MEMÓRIA ──"; free -h; echo ""; echo "── UPTIME ──"; uptime; \
+        echo ""; echo "── TOP CPU ──"; ps aux --sort=-%cpu 2>/dev/null | head -6; \
+        echo ""; echo "── TOP RAM ──"; ps aux --sort=-%mem 2>/dev/null | head -6)
+  whiptail --title "$TITLE — 📊 Memória e CPU" --scrolltext --msgbox "$out" 24 80
 }
 
 # ── 8 ────────────────────────────────────────
 logs_sistema() {
-  header
-  echo -e "${BOLD}📝 Logs — últimos erros do boot${NC}\n"
-  journalctl -p 3 -b 0 --no-pager -n 40 2>/dev/null | sed 's/^/  /'
-  [ $? -ne 0 ] && echo -e "${RED}Sem acesso aos logs (tente com pkexec)${NC}"
-  read -p $'\nEnter...'; menu
+  local out
+  out=$(journalctl -p 3 -b 0 --no-pager -n 50 2>/dev/null) || out="Sem acesso aos logs"
+  whiptail --title "$TITLE — 📝 Logs (erros do boot)" --scrolltext --msgbox "$out" 24 80
 }
 
 # ── 9 ────────────────────────────────────────
 hardware_info() {
-  header
-  echo -e "${BOLD}⚡ Hardware${NC}\n"
-
-  div "── CPU ──"
-  grep -m1 "model name" /proc/cpuinfo | cut -d: -f2 | sed 's/^/  /'
-  grep -c ^processor /proc/cpuinfo | xargs printf "  Núcleos lógicos: %s\n"
-  echo "  Arquitetura: $(uname -m)"
-  echo "  Frequência : $(lscpu 2>/dev/null | grep 'CPU max MHz' | awk '{print $NF " MHz"}' || echo 'N/A')"
-  echo ""
-
-  div "── GPU ──"
-  if has nvidia-smi; then
-    nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total \
-      --format=csv,noheader 2>/dev/null | sed 's/^/  /'
-  elif has glxinfo; then
-    glxinfo -B 2>/dev/null | grep -i "device\|renderer\|version" | head -4 | sed 's/^/  /'
-  else
-    lspci 2>/dev/null | grep -iE "vga|3d|display" | while read -r line; do
-      echo "  $(echo "$line" | cut -d: -f3-)"
-    done
-  fi
-  echo ""
-
-  div "── Análise de boot ──"
-  systemd-analyze 2>/dev/null | sed 's/^/  /'
-  if has systemd-analyze; then
+  local out
+  out=$(echo "── CPU ──"
+    grep -m1 "model name" /proc/cpuinfo | cut -d: -f2
+    echo "Núcleos lógicos: $(grep -c ^processor /proc/cpuinfo)"
+    lscpu 2>/dev/null | grep -E "CPU max MHz|CPU min MHz|Architecture"
     echo ""
-    echo "  Serviços mais lentos no boot:"
-    systemd-analyze blame 2>/dev/null | head -8 | sed 's/^/  /'
-  fi
-  echo ""
-
-  div "── Dispositivos PCI ──"
-  lspci 2>/dev/null | grep -iE "network|ethernet|wireless|audio|nvme|sata" | sed 's/^/  /' | head -8
-  echo ""
-
-  read -p "Prima Enter para voltar..."
-  menu
+    echo "── GPU ──"
+    if has nvidia-smi; then
+      nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total \
+        --format=csv,noheader
+    else
+      lspci | grep -iE "vga|3d|display" | cut -d: -f3-
+    fi
+    echo ""
+    echo "── BOOT ──"
+    systemd-analyze
+    echo ""
+    echo "Serviços mais lentos:"
+    systemd-analyze blame | head -8
+    echo ""
+    echo "── DISPOSITIVOS ──"
+    lspci | grep -iE "network|ethernet|wireless|audio|nvme|sata")
+  whiptail --title "$TITLE — ⚡ Hardware" --scrolltext --msgbox "$out" 24 80
 }
 
 # ── 10 ───────────────────────────────────────
 rede_menu() {
-  header
-  echo -e "${BOLD}🌐 Rede${NC}\n"
-
-  div "── Interfaces ativas ──"
-  ip -br addr show 2>/dev/null | grep -v lo | sed 's/^/  /'
-  echo ""
-
-  div "── Portas a escutar ──"
-  ss -tlnp 2>/dev/null | awk 'NR>1{
-    split($5, a, ":")
-    port = a[length(a)]
-    print "  " port " → " $1 " " $7
-  }' | sed 's/users:((//; s/)).*//' | head -20
-  echo ""
-
-  div "── Firewall ──"
-  if has ufw; then
-    echo "  UFW: $(pkexec ufw status 2>/dev/null | head -1)"
-  elif has nft; then
-    echo "  nftables: $(pkexec nft list ruleset 2>/dev/null | grep -c "chain" | xargs printf '%d chains')" 2>/dev/null
-  elif has iptables; then
-    pkexec iptables -L -n --line-numbers 2>/dev/null | head -8 | sed 's/^/  /'
-  else
-    echo "  Nenhum firewall detetado"
-  fi
-  echo ""
-
-  div "── DNS atual ──"
-  nmcli -t -f IP4.DNS con show "$SSID" 2>/dev/null | sed 's/^/  /'
-  resolvectl status 2>/dev/null | grep "DNS Servers" | head -1 | sed 's/^/  /'
-  echo ""
-
-  div "── Ping ──"
-  echo "  cloudflare (1.1.1.1): $(ping -c 2 -W 3 1.1.1.1 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms"
-  echo "  google     (8.8.8.8): $(ping -c 2 -W 3 8.8.8.8 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms"
-
-  read -p $'\nEnter...'; menu
+  local out
+  out=$(echo "── INTERFACES ATIVAS ──"
+    ip -br addr | grep -v lo
+    echo ""
+    echo "── PORTAS A ESCUTAR ──"
+    ss -tlnp | awk 'NR>1{
+      split($5,a,":"); port=a[length(a)]; print "  " port " → " $1
+    }' | head -20
+    echo ""
+    echo "── FIREWALL ──"
+    if has ufw; then ufw status | head -5
+    elif has iptables; then iptables -L -n --line-numbers | head -8
+    else echo "Nenhum firewall detetado"; fi
+    echo ""
+    echo "── DNS ──"
+    resolvectl status 2>/dev/null | grep "DNS Servers" | head -1
+    echo ""
+    echo "── PING ──"
+    echo "Cloudflare (1.1.1.1): $(ping -c 2 -W 2 1.1.1.1 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms"
+    echo "Google     (8.8.8.8): $(ping -c 2 -W 2 8.8.8.8 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms")
+  whiptail --title "$TITLE — 🌐 Rede" --scrolltext --msgbox "$out" 24 80
 }
 
 # ── 11 ───────────────────────────────────────
 manutencao() {
-  header
-  echo -e "${BOLD}🧹 Manutenção do sistema${NC}\n"
+  CHOICE=$(whiptail --title "$TITLE — 🧹 Manutenção" --menu "\nEscolha:" 16 60 6 \
+    "1" "Atualizar pacotes (apt upgrade)" \
+    "2" "Limpar cache do apt" \
+    "3" "Limpar logs do journal (100MB)" \
+    "4" "Executar TRIM no SSD" \
+    "5" "Corrigir pacotes quebrados" \
+    "0" "Voltar" 3>&1 1>&2 2>&3)
 
-  div "── Pacotes atualizáveis ──"
-  pkexec apt-get update -qq 2>/dev/null
-  UPDATES=$(apt-get --just-print upgrade 2>/dev/null | grep "^Inst" | wc -l)
-  echo "  $UPDATES pacotes disponíveis para atualizar"
-  echo ""
-
-  echo -e "${BOLD}Opções:${NC}"
-  echo "  1) Atualizar todos os pacotes (apt upgrade)"
-  echo "  2) Limpar cache do apt (autoclean + autoremove)"
-  echo "  3) Limpar logs do journal (manter últimos 100MB)"
-  echo "  4) Executar TRIM no SSD (fstrim)"
-  echo "  5) Corrigir pacotes quebrados (--fix-broken)"
-  echo "  0) Voltar"
-  read -p $'\nOpção: ' m
-  case $m in
-    1) echo -e "${YELLOW}A atualizar...${NC}"
-       pkexec apt-get upgrade -y 2>/dev/null | tail -3
-       echo -e "${GREEN}Atualização concluída ✓${NC}" ;;
-    2) pkexec apt-get autoclean -y 2>/dev/null
-       pkexec apt-get autoremove -y 2>/dev/null | tail -2
-       echo -e "${GREEN}Limpeza concluída ✓${NC}" ;;
-    3) pkexec journalctl --vacuum-size=100M 2>/dev/null
-       echo -e "${GREEN}Logs limpos ✓${NC}" ;;
-    4) pkexec fstrim -v / 2>/dev/null
-       echo -e "${GREEN}TRIM executado ✓${NC}" ;;
-    5) pkexec apt-get install --fix-broken -y 2>/dev/null | tail -3
-       echo -e "${GREEN}Correção concluída ✓${NC}" ;;
-    0) menu ;;
+  case $CHOICE in
+    1)
+      whiptail --title "A atualizar..." --infobox "A executar apt update && apt upgrade..." 5 50
+      apt-get update -qq 2>/dev/null
+      apt-get upgrade -y 2>/dev/null | tail -3
+      msg "✅ Atualização concluída" ;;
+    2)
+      apt-get autoclean -y 2>/dev/null
+      apt-get autoremove -y 2>/dev/null
+      msg "✅ Limpeza concluída" ;;
+    3)
+      journalctl --vacuum-size=100M 2>/dev/null
+      msg "✅ Logs limpos (últimos 100MB mantidos)" ;;
+    4)
+      fstrim -v / 2>/dev/null
+      msg "✅ TRIM executado" ;;
+    5)
+      apt-get install --fix-broken -y 2>/dev/null | tail -3
+      msg "✅ Correção concluída" ;;
   esac
-  read -p $'\nEnter...'; menu
 }
 
 # ── 12 ───────────────────────────────────────
 espaco_disco() {
-  header
-  echo -e "${BOLD}📁 Análise de espaço em disco${NC}\n"
+  local out
+  out=$(echo "── PARTIÇÕES ──"
+    df -h | grep -v tmpfs | grep -v udev
+    echo ""
+    echo "── TOP 15 PASTAS EM $HOME ──"
+    du -sh "$HOME"/* --exclude=.cache 2>/dev/null | sort -rh | head -15
+    echo ""
+    echo "Lixeira : $(du -sh $HOME/.local/share/Trash 2>/dev/null | awk '{print $1}')"
+    echo "Cache   : $(du -sh $HOME/.cache 2>/dev/null | awk '{print $1}')")
+  whiptail --title "$TITLE — 📁 Espaço em disco" --scrolltext --msgbox "$out" 24 80
 
-  div "── Partições ──"
-  df -h | grep -v tmpfs | grep -v udev | sed 's/^/  /'
-  echo ""
-
-  div "── Ocupação da $HOME ──"
-  du -sh "$HOME"/* --exclude=.cache --exclude=.local/share/Trash 2>/dev/null | sort -rh | head -15 | sed 's/^/  /'
-  echo ""
-  echo "  Lixeira: $(du -sh ~/.local/share/Trash 2>/dev/null | awk '{print $1}') | Cache: $(du -sh ~/.cache 2>/dev/null | awk '{print $1}')"
-  echo ""
-
-  read -p "Esvaziar lixeira? (s/N): " t
-  [[ "$t" =~ ^[Ss]$ ]] && rm -rf ~/.local/share/Trash/* 2>/dev/null && echo -e "${GREEN}Lixeira vazia ✓${NC}"
-  read -p $'\nEnter...'; menu
+  if whiptail --title "Lixeira" --yesno "Esvaziar a lixeira?" 8 50; then
+    rm -rf "$HOME/.local/share/Trash"/* 2>/dev/null
+    msg "✅ Lixeira vazia"
+  fi
 }
 
 # ── 13 ───────────────────────────────────────
 exportar_diag() {
   local out="$HOME/sysmenu-diagnostico-$(date +%Y%m%d-%H%M%S).txt"
 
-  header
-  echo -e "${BOLD}📋 A exportar diagnóstico...${NC}\n"
+  whiptail --title "Exportar" --infobox "A gerar diagnóstico..." 3 40
 
   {
-    echo "═══════════════════════════════════════════════"
-    echo "  SYS MENU — Diagnóstico do Sistema"
+    echo "══════════════════════════════════════════════════"
+    echo "  🛠  SYS MENU — Diagnóstico do Sistema"
     echo "  Data: $(date)"
-    echo "═══════════════════════════════════════════════"
+    echo "══════════════════════════════════════════════════"
     echo ""
     echo "Hostname : $(hostname)"
     echo "Kernel   : $(uname -r)"
-    echo "OS       : $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')"
+    echo "OS       : $(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')"
     echo "Uptime   : $(uptime -p)"
     echo "Load     : $(cat /proc/loadavg)"
     echo ""
@@ -444,45 +380,79 @@ exportar_diag() {
     df -h
     echo ""
     echo "── Temperaturas ──"
-    sensors 2>/dev/null
+    sensors 2>/dev/null || echo "n/a"
     echo ""
     echo "── GPU ──"
-    if has nvidia-smi; then nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu --format=csv,noheader 2>/dev/null
-    else lspci | grep -iE "vga|3d|display" | cut -d: -f3-; fi
+    nvidia-smi --query-gpu=name,temperature.gpu --format=csv,noheader 2>/dev/null || \
+      lspci | grep -iE "vga|3d|display" | cut -d: -f3-
     echo ""
     echo "── WiFi ──"
-    iw dev "$WIFI" link 2>/dev/null
+    iw dev "$WIFI" link 2>/dev/null || echo "n/a"
     echo ""
-    echo "── Portas a escutar ──"
-    ss -tlnp 2>/dev/null
+    echo "── Portas ──"
+    ss -tlnp
     echo ""
     echo "── Serviços com falha ──"
-    systemctl --failed 2>/dev/null
+    systemctl --failed 2>/dev/null || echo "Nenhum"
     echo ""
     echo "── Zram ──"
-    zramctl 2>/dev/null
+    zramctl 2>/dev/null || echo "Inativo"
+    echo ""
+    echo "── Boot ──"
+    systemd-analyze
+    systemd-analyze blame | head -10
+    echo ""
+    echo "── SMART ──"
+    smartctl -H "$DISK" 2>/dev/null
+    smartctl -A "$DISK" 2>/dev/null | head -45
     echo ""
     echo "── Firewall ──"
     ufw status 2>/dev/null || echo "n/a"
     echo ""
-    echo "── Análise de boot ──"
-    systemd-analyze 2>/dev/null
-    systemd-analyze blame 2>/dev/null | head -10
-    echo ""
-    echo "── SMART ──"
-    pkexec smartctl -H "$DISK" 2>/dev/null
-    pkexec smartctl -A "$DISK" 2>/dev/null | head -45
-    echo ""
-    echo "═ FIM ═"
+    echo "══════════════════════════════════════════════════"
+    echo "  FIM"
   } > "$out"
 
-  echo -e "${GREEN}✔ Diagnóstico exportado:${NC}"
-  echo -e "  ${BOLD}$out${NC}"
-  echo -e "  Tamanho: $(du -h "$out" | awk '{print $1}')"
-  read -p $'\nPrima Enter para voltar...'
-  menu
+  whiptail --title "Exportado" --msgbox "Diagnóstico salvo em:\n\n$out\n\nTamanho: $(du -h "$out" | awk '{print $1}')" 12 70
+}
+
+# ── 14 ───────────────────────────────────────
+auto_pilot() {
+  whiptail --title "🏁 Auto-Pilot" --yesno \
+    "Vai executar:\n\n"'
+• apt update & upgrade
+• apt autoclean & autoremove
+• Limpar logs do journal
+• TRIM no SSD
+• Corrigir pacotes quebrados
+• Ativar zram (se inativo)
+• DNS → 1.1.1.1 / 8.8.8.8
+• Power saving WiFi OFF
+• Esvaziar lixeira
+\nDeseja continuar?' 18 60 || return
+
+  (
+    echo "XXX"; echo "A atualizar pacotes..."; echo "XXX"
+    apt-get update -qq 2>/dev/null && apt-get upgrade -y 2>/dev/null
+    echo "XXX"; echo "A limpar sistema..."; echo "XXX"
+    apt-get autoclean -y 2>/dev/null && apt-get autoremove -y 2>/dev/null
+    journalctl --vacuum-size=100M 2>/dev/null
+    echo "XXX"; echo "TRIM no SSD..."; echo "XXX"
+    fstrim -v / 2>/dev/null
+    echo "XXX"; echo "A corrigir pacotes..."; echo "XXX"
+    apt-get install --fix-broken -y 2>/dev/null
+    echo "XXX"; echo "A configurar WiFi..."; echo "XXX"
+    [ -n "$SSID" ] && nmcli con mod "$SSID" ipv4.dns "1.1.1.1 8.8.8.8" 2>/dev/null
+    [ -n "$WIFI" ] && iw dev "$WIFI" set power_save off 2>/dev/null
+    echo "XXX"; echo "A ativar zram..."; echo "XXX"
+    zramctl 2>/dev/null | grep -q zram || systemctl start dev-zram0.swap 2>/dev/null
+    echo "XXX"; echo "A limpar lixeira..."; echo "XXX"
+    rm -rf "$HOME/.local/share/Trash"/* 2>/dev/null
+    echo "XXX"; echo "Concluído!"; echo "XXX"
+  ) | whiptail --title "$TITLE — 🏁 Auto-Pilot" --gauge "A executar..." 8 60 0
+
+  msg "✅ Auto-Pilot concluído!\n\nSistema otimizado e atualizado."
 }
 
 # ── START ────────────────────────────────────
-[ "$(id -u)" -eq 0 ] && { echo -e "${RED}Não execute como root. O script pede permissão quando necessário.${NC}"; exit 1; }
-while true; do menu; done
+main_menu

@@ -19,6 +19,7 @@ Ferramenta tudo-em-um de diagnóstico e otimização do sistema Linux (GNOME/Deb
 | 11 | 🧹 Manutenção | `apt upgrade`, `autoremove`, limpar logs, `fstrim` |
 | 12 | 📁 Espaço | Análise de partições + top pastas + esvaziar lixeira |
 | 13 | 📋 Exportar | Exporta diagnóstico completo para `.txt` |
+| 14 | 🏁 Auto-Pilot | Executa tudo automaticamente (update, limpeza, TRIM, zram, DNS, power save) |
 
 ## Instalação
 
@@ -45,7 +46,7 @@ sysmenu
 - `nvidia-smi` — info GPU NVIDIA
 - `iw`, `nmcli` — WiFi
 
-O script usa `pkexec` para comandos que precisam de root.
+O script auto-eleva-se para root via `sudo` — executa com `./sysmenu` sem preocupações.
 
 ## License
 
