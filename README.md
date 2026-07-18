@@ -6,19 +6,24 @@ Ferramenta tudo-em-um de diagnóstico e otimização do sistema Linux (GNOME/Deb
 
 | # | Opção | Descrição |
 |---|-------|-----------|
-| 1 | 🔍 Diagnóstico completo | Sistema, memória, disco, temperaturas, WiFi, zram, serviços |
-| 2 | 📶 WiFi | Diagnóstico da conexão, trocar DNS, desligar power saving, scan |
-| 3 | 💾 Zram | Status e ativação de zram |
+| 1 | 🔍 Diagnóstico completo | Sistema, CPU, memória, disco, GPU, WiFi, portas, boot, zram |
+| 2 | 📶 WiFi | Diagnóstico, trocar DNS, power saving, scan de redes |
+| 3 | 💾 Zram | Status e ativação |
 | 4 | 🛠 Serviços | Listar e desativar serviços com falha |
-| 5 | 💽 SMART | Saúde do disco + teste short |
+| 5 | 💽 SMART | Saúde do disco + teste rápido (short) |
 | 6 | 🌡 Temperaturas | Sensores do sistema |
 | 7 | 📊 Memória/CPU | Uso de recursos + top processos |
 | 8 | 📝 Logs | Últimos erros do boot |
+| 9 | ⚡ Hardware | Info CPU, GPU, análise de boot, dispositivos |
+| 10 | 🌐 Rede | Portas abertas, firewall, ping, DNS |
+| 11 | 🧹 Manutenção | `apt upgrade`, `autoremove`, limpar logs, `fstrim` |
+| 12 | 📁 Espaço | Análise de partições + top pastas + esvaziar lixeira |
+| 13 | 📋 Exportar | Exporta diagnóstico completo para `.txt` |
 
 ## Instalação
 
 ```bash
-git clone https://github.com/aycher/sysmenu.git
+git clone https://github.com/anymousdark/sysmenu.git
 cd sysmenu
 chmod +x sysmenu
 ./sysmenu
@@ -27,16 +32,18 @@ chmod +x sysmenu
 Ou instalação global:
 
 ```bash
+sudo ./install.sh
+# ou
 sudo cp sysmenu /usr/local/bin/
 sysmenu
 ```
 
-## Dependências
+## Dependências (opcionais)
 
-- `mpv` (para live wallpaper)
-- `smartmontools` (para SMART)
-- `lm-sensors` (para temperaturas)
-- `iw`, `nmcli` (para WiFi)
+- `smartmontools` — saúde do disco (SMART)
+- `lm-sensors` — temperaturas
+- `nvidia-smi` — info GPU NVIDIA
+- `iw`, `nmcli` — WiFi
 
 O script usa `pkexec` para comandos que precisam de root.
 

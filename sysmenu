@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 
 # ──────────────────────────────────────────────
-#   🛠  SYS MENU — v1.0
+#   🛠  SYS MENU — v2.0
 #   Diagnóstico + otimização do sistema
-#   Uso: ./sysmenu     ou     bash sysmenu
+#   https://github.com/anymousdark/sysmenu
 # ──────────────────────────────────────────────
 
 RED='\033[1;31m'; GREEN='\033[1;32m'; YELLOW='\033[1;33m'
 BLUE='\033[1;34m'; CYAN='\033[1;36m'; NC='\033[0m'; BOLD='\033[1m'
+
 WIFI=$(iw dev 2>/dev/null | awk '/Interface/{print $2}')
 SSID=$(nmcli -t -f NAME con show --active 2>/dev/null | head -1)
 DISK="/dev/sda"
@@ -26,12 +27,17 @@ menu() {
   echo -e "${BOLD}Escolha uma opção:${NC}\n"
   echo -e "  ${GREEN}1${NC}) 🔍  Diagnóstico completo"
   echo -e "  ${GREEN}2${NC}) 📶  WiFi - diagnóstico e otimização"
-  echo -e "  ${GREEN}3${NC}) 💾  Zram - status e ativação"
+  echo -e "  ${GREEN}3${NC}) 💾  Zram"
   echo -e "  ${GREEN}4${NC}) 🛠   Serviços com falha"
   echo -e "  ${GREEN}5${NC}) 💽  Saúde do disco (SMART)"
-  echo -e "  ${GREEN}6${NC}) 🌡  Temperaturas"
+  echo -e "  ${GREEN}6${NC}) 🌡  Temperaturas / sensores"
   echo -e "  ${GREEN}7${NC}) 📊  Memória e CPU"
   echo -e "  ${GREEN}8${NC}) 📝  Logs do sistema"
+  echo -e "  ${GREEN}9${NC}) ⚡  Hardware (CPU/GPU)"
+  echo -e "  ${GREEN}10${NC}) 🌐  Rede (portas, firewall, ping)"
+  echo -e "  ${GREEN}11${NC}) 🧹  Manutenção (update, limpeza)"
+  echo -e "  ${GREEN}12${NC}) 📁  Espaço em disco (top pastas)"
+  echo -e "  ${GREEN}13${NC}) 📋  Exportar diagnóstico para ficheiro"
   echo -e "  ${GREEN}0${NC}) ❌  Sair\n"
   read -p "Opção: " opt
   case $opt in
@@ -43,58 +49,95 @@ menu() {
     6) temperaturas ;;
     7) mem_cpu      ;;
     8) logs_sistema ;;
+    9) hardware_info ;;
+   10) rede_menu ;;
+   11) manutencao ;;
+   12) espaco_disco ;;
+   13) exportar_diag ;;
     0) echo -e "${GREEN}Bye!${NC}"; exit 0 ;;
     *) echo -e "${RED}Opção inválida!${NC}"; sleep 1; menu ;;
   esac
 }
+
+# ── Utilitários ──────────────────────────────
+has() { command -v "$1" &>/dev/null; }
+
+div() { echo -e "${YELLOW}$1${NC}"; }
 
 # ── 1 ────────────────────────────────────────
 diag_completo() {
   header
   echo -e "${BOLD}🔍 DIAGNÓSTICO COMPLETO${NC}\n"
 
-  echo -e "${YELLOW}── Sistema ──${NC}"
+  div "── Sistema ──"
   printf "  Hostname : %s\n" "$(hostname)"
   printf "  Kernel   : %s\n" "$(uname -r)"
   printf "  Uptime   : %s\n" "$(uptime -p | sed 's/up //')"
   printf "  Load     : %s\n" "$(cat /proc/loadavg | cut -d' ' -f1-3)"
+  printf "  OS       : %s\n" "$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')"
   echo ""
 
-  echo -e "${YELLOW}── Memória ──${NC}"
+  div "── CPU ──"
+  grep -m1 "model name" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^/  /'
+  grep -c ^processor /proc/cpuinfo 2>/dev/null | xargs printf "  Núcleos  : %s\n"
+  echo ""
+
+  div "── Memória ──"
   free -h | awk 'NR==1{printf "  %-8s %8s %8s %8s\n",$1,$2,$3,$4} NR==2{printf "  %-8s %8s %8s %8s\n",$1,$2,$3,$4}'
   echo ""
 
-  echo -e "${YELLOW}── Disco ──${NC}"
+  div "── Disco ──"
   df -h / | awk 'NR==2{printf "  %s — %s de %s usados (%s livres)\n",$1,$3,$2,$4}'
   echo ""
 
-  echo -e "${YELLOW}── Temperaturas ──${NC}"
-  sensors 2>/dev/null | grep -E "Core|Package|temp1|Composite" | head -5 | sed 's/^/  /'
+  div "── Temperaturas ──"
+  sensors 2>/dev/null | grep -E "Core|Package|temp1|Composite|Tctl" | head -5 | sed 's/^/  /'
   echo ""
 
-  echo -e "${YELLOW}── WiFi ──${NC}"
+  div "── GPU ──"
+  if has nvidia-smi; then
+    nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu --format=csv,noheader 2>/dev/null | sed 's/^/  /'
+  elif has glxinfo; then
+    glxinfo -B 2>/dev/null | grep -i "device\|renderer" | head -2 | sed 's/^/  /'
+  else
+    lspci 2>/dev/null | grep -i vga | cut -d: -f3 | sed 's/^/  /'
+  fi
+  echo ""
+
+  div "── WiFi ──"
   if [ -n "$WIFI" ]; then
     iw dev "$WIFI" link 2>/dev/null | sed 's/^/  /'
     iw dev "$WIFI" station dump 2>/dev/null | awk '/signal:/{printf "  Sinal : %s %s\n",$2,$3}'
-    echo "  DNS   : $(nmcli -t -f IP4.DNS con show "$SSID" 2>/dev/null | tr '\n' ' ')"
   else
     echo "  (sem interface WiFi)"
   fi
 
-  echo -e "\n${YELLOW}── Zram ──${NC}"
-  if zramctl 2>/dev/null | grep -q zram; then
-    zramctl | awk 'NR>1{printf "  %s — %s, compressão %s\n",$1,$4,$2}'
-  else
-    echo "  Inativo"
-  fi
+  div "── Portas a escutar ──"
+  ss -tlnp 2>/dev/null | awk 'NR>1{printf "  %s %s %s\n",$1,$5,$6}' | head -10 | sed 's/  //'
+  echo ""
 
-  echo -e "\n${YELLOW}── Serviços com falha ──${NC}"
+  div "── Serviços com falha ──"
   if systemctl --failed 2>/dev/null | grep -q "failed"; then
     systemctl --failed 2>/dev/null | grep "loaded failed" | sed 's/^/  /'
   else
     echo "  Nenhum"
   fi
+
+  div "── Zram ──"
+  if zramctl 2>/dev/null | grep -q zram; then
+    zramctl | awk 'NR>1{printf "  %s — %s, compressão %s\n",$1,$4,$2}'
+  else
+    echo "  Inativo"
+  fi
   echo ""
+
+  div "── Análise de boot ──"
+  if has systemd-analyze; then
+    echo "  $(systemd-analyze 2>/dev/null | sed 's/Startup finished in//')"
+    systemd-analyze blame 2>/dev/null | head -5 | sed 's/^/  /'
+  fi
+  echo ""
+
   read -p "Prima Enter para voltar..."
   menu
 }
@@ -106,7 +149,7 @@ wifi_menu() {
     echo -e "${BOLD}📶 WiFi${NC}\n"
     [ -z "$WIFI" ] && { echo -e "${RED}Sem interface WiFi${NC}"; read -p "Enter..."; menu; return; }
 
-    echo -e "${YELLOW}── Conexão ──${NC}"
+    div "── Conexão ──"
     iw dev "$WIFI" link 2>/dev/null | sed 's/^/  /'
     echo ""
     iw dev "$WIFI" station dump 2>/dev/null | awk '
@@ -116,8 +159,8 @@ wifi_menu() {
       /tx retries/{printf "  TX retries : %s\n",$3}
       /connected time/{printf "  Conectado  : %ss\n",$3}
     '
-    echo ""
-    echo -e "${YELLOW}── Redes por perto ──${NC}"
+
+    div "── Redes por perto ──"
     nmcli dev wifi list 2>/dev/null | head -12 | sed 's/^/  /'
 
     echo -e "\n${BOLD}Opções:${NC}"
@@ -186,7 +229,8 @@ disk_smart() {
   echo -e "  Modelo      : ${BOLD}$MODEL${NC}"
   echo -e "  Saúde       : $(echo "$HEALTH" | sed 's/PASSED/✅ PASSED/; s/FAILED/❌ FAILED/')"
   echo -e "  Temperatura : ${TEMP:-N/A}°C"
-  echo -e "  SMART       :"
+  echo ""
+  div "── Atributos SMART ──"
   pkexec smartctl -A "$DISK" 2>/dev/null | sed -n '8,25p' | sed 's/^/  /'
   read -p $'\nExecutar teste short? (s/N): ' a
   [[ "$a" =~ ^[Ss]$ ]] && pkexec smartctl -t short "$DISK" 2>/dev/null && \
@@ -207,13 +251,16 @@ temperaturas() {
 mem_cpu() {
   header
   echo -e "${BOLD}📊 Memória e CPU${NC}\n"
-  echo -e "${YELLOW}── Memória ──${NC}"
+  div "── Memória ──"
   free -h | sed 's/^/  /'
-  echo -e "\n${YELLOW}── Uptime ──${NC}"
+  echo ""
+  div "── Uptime ──"
   echo "  $(uptime)"
-  echo -e "\n${YELLOW}── Top CPU ──${NC}"
+  echo ""
+  div "── Top CPU ──"
   ps aux --sort=-%cpu 2>/dev/null | head -6 | sed 's/^/  /'
-  echo -e "\n${YELLOW}── Top RAM ──${NC}"
+  echo ""
+  div "── Top RAM ──"
   ps aux --sort=-%mem 2>/dev/null | head -6 | sed 's/^/  /'
   read -p $'\nEnter...'; menu
 }
@@ -225,6 +272,215 @@ logs_sistema() {
   journalctl -p 3 -b 0 --no-pager -n 40 2>/dev/null | sed 's/^/  /'
   [ $? -ne 0 ] && echo -e "${RED}Sem acesso aos logs (tente com pkexec)${NC}"
   read -p $'\nEnter...'; menu
+}
+
+# ── 9 ────────────────────────────────────────
+hardware_info() {
+  header
+  echo -e "${BOLD}⚡ Hardware${NC}\n"
+
+  div "── CPU ──"
+  grep -m1 "model name" /proc/cpuinfo | cut -d: -f2 | sed 's/^/  /'
+  grep -c ^processor /proc/cpuinfo | xargs printf "  Núcleos lógicos: %s\n"
+  echo "  Arquitetura: $(uname -m)"
+  echo "  Frequência : $(lscpu 2>/dev/null | grep 'CPU max MHz' | awk '{print $NF " MHz"}' || echo 'N/A')"
+  echo ""
+
+  div "── GPU ──"
+  if has nvidia-smi; then
+    nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total \
+      --format=csv,noheader 2>/dev/null | sed 's/^/  /'
+  elif has glxinfo; then
+    glxinfo -B 2>/dev/null | grep -i "device\|renderer\|version" | head -4 | sed 's/^/  /'
+  else
+    lspci 2>/dev/null | grep -iE "vga|3d|display" | while read -r line; do
+      echo "  $(echo "$line" | cut -d: -f3-)"
+    done
+  fi
+  echo ""
+
+  div "── Análise de boot ──"
+  systemd-analyze 2>/dev/null | sed 's/^/  /'
+  if has systemd-analyze; then
+    echo ""
+    echo "  Serviços mais lentos no boot:"
+    systemd-analyze blame 2>/dev/null | head -8 | sed 's/^/  /'
+  fi
+  echo ""
+
+  div "── Dispositivos PCI ──"
+  lspci 2>/dev/null | grep -iE "network|ethernet|wireless|audio|nvme|sata" | sed 's/^/  /' | head -8
+  echo ""
+
+  read -p "Prima Enter para voltar..."
+  menu
+}
+
+# ── 10 ───────────────────────────────────────
+rede_menu() {
+  header
+  echo -e "${BOLD}🌐 Rede${NC}\n"
+
+  div "── Interfaces ativas ──"
+  ip -br addr show 2>/dev/null | grep -v lo | sed 's/^/  /'
+  echo ""
+
+  div "── Portas a escutar ──"
+  ss -tlnp 2>/dev/null | awk 'NR>1{
+    split($5, a, ":")
+    port = a[length(a)]
+    print "  " port " → " $1 " " $7
+  }' | sed 's/users:((//; s/)).*//' | head -20
+  echo ""
+
+  div "── Firewall ──"
+  if has ufw; then
+    echo "  UFW: $(pkexec ufw status 2>/dev/null | head -1)"
+  elif has nft; then
+    echo "  nftables: $(pkexec nft list ruleset 2>/dev/null | grep -c "chain" | xargs printf '%d chains')" 2>/dev/null
+  elif has iptables; then
+    pkexec iptables -L -n --line-numbers 2>/dev/null | head -8 | sed 's/^/  /'
+  else
+    echo "  Nenhum firewall detetado"
+  fi
+  echo ""
+
+  div "── DNS atual ──"
+  nmcli -t -f IP4.DNS con show "$SSID" 2>/dev/null | sed 's/^/  /'
+  resolvectl status 2>/dev/null | grep "DNS Servers" | head -1 | sed 's/^/  /'
+  echo ""
+
+  div "── Ping ──"
+  echo "  cloudflare (1.1.1.1): $(ping -c 2 -W 3 1.1.1.1 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms"
+  echo "  google     (8.8.8.8): $(ping -c 2 -W 3 8.8.8.8 2>/dev/null | awk '/rtt/{print $4}' | cut -d/ -f1) ms"
+
+  read -p $'\nEnter...'; menu
+}
+
+# ── 11 ───────────────────────────────────────
+manutencao() {
+  header
+  echo -e "${BOLD}🧹 Manutenção do sistema${NC}\n"
+
+  div "── Pacotes atualizáveis ──"
+  pkexec apt-get update -qq 2>/dev/null
+  UPDATES=$(apt-get --just-print upgrade 2>/dev/null | grep "^Inst" | wc -l)
+  echo "  $UPDATES pacotes disponíveis para atualizar"
+  echo ""
+
+  echo -e "${BOLD}Opções:${NC}"
+  echo "  1) Atualizar todos os pacotes (apt upgrade)"
+  echo "  2) Limpar cache do apt (autoclean + autoremove)"
+  echo "  3) Limpar logs do journal (manter últimos 100MB)"
+  echo "  4) Executar TRIM no SSD (fstrim)"
+  echo "  5) Corrigir pacotes quebrados (--fix-broken)"
+  echo "  0) Voltar"
+  read -p $'\nOpção: ' m
+  case $m in
+    1) echo -e "${YELLOW}A atualizar...${NC}"
+       pkexec apt-get upgrade -y 2>/dev/null | tail -3
+       echo -e "${GREEN}Atualização concluída ✓${NC}" ;;
+    2) pkexec apt-get autoclean -y 2>/dev/null
+       pkexec apt-get autoremove -y 2>/dev/null | tail -2
+       echo -e "${GREEN}Limpeza concluída ✓${NC}" ;;
+    3) pkexec journalctl --vacuum-size=100M 2>/dev/null
+       echo -e "${GREEN}Logs limpos ✓${NC}" ;;
+    4) pkexec fstrim -v / 2>/dev/null
+       echo -e "${GREEN}TRIM executado ✓${NC}" ;;
+    5) pkexec apt-get install --fix-broken -y 2>/dev/null | tail -3
+       echo -e "${GREEN}Correção concluída ✓${NC}" ;;
+    0) menu ;;
+  esac
+  read -p $'\nEnter...'; menu
+}
+
+# ── 12 ───────────────────────────────────────
+espaco_disco() {
+  header
+  echo -e "${BOLD}📁 Análise de espaço em disco${NC}\n"
+
+  div "── Partições ──"
+  df -h | grep -v tmpfs | grep -v udev | sed 's/^/  /'
+  echo ""
+
+  div "── Ocupação da $HOME ──"
+  du -sh "$HOME"/* --exclude=.cache --exclude=.local/share/Trash 2>/dev/null | sort -rh | head -15 | sed 's/^/  /'
+  echo ""
+  echo "  Lixeira: $(du -sh ~/.local/share/Trash 2>/dev/null | awk '{print $1}') | Cache: $(du -sh ~/.cache 2>/dev/null | awk '{print $1}')"
+  echo ""
+
+  read -p "Esvaziar lixeira? (s/N): " t
+  [[ "$t" =~ ^[Ss]$ ]] && rm -rf ~/.local/share/Trash/* 2>/dev/null && echo -e "${GREEN}Lixeira vazia ✓${NC}"
+  read -p $'\nEnter...'; menu
+}
+
+# ── 13 ───────────────────────────────────────
+exportar_diag() {
+  local out="$HOME/sysmenu-diagnostico-$(date +%Y%m%d-%H%M%S).txt"
+
+  header
+  echo -e "${BOLD}📋 A exportar diagnóstico...${NC}\n"
+
+  {
+    echo "═══════════════════════════════════════════════"
+    echo "  SYS MENU — Diagnóstico do Sistema"
+    echo "  Data: $(date)"
+    echo "═══════════════════════════════════════════════"
+    echo ""
+    echo "Hostname : $(hostname)"
+    echo "Kernel   : $(uname -r)"
+    echo "OS       : $(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')"
+    echo "Uptime   : $(uptime -p)"
+    echo "Load     : $(cat /proc/loadavg)"
+    echo ""
+    echo "── CPU ──"
+    grep -m1 "model name" /proc/cpuinfo | cut -d: -f2
+    grep -c ^processor /proc/cpuinfo | xargs printf "Núcleos: %s\n"
+    echo ""
+    echo "── Memória ──"
+    free -h
+    echo ""
+    echo "── Discos ──"
+    df -h
+    echo ""
+    echo "── Temperaturas ──"
+    sensors 2>/dev/null
+    echo ""
+    echo "── GPU ──"
+    if has nvidia-smi; then nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu --format=csv,noheader 2>/dev/null
+    else lspci | grep -iE "vga|3d|display" | cut -d: -f3-; fi
+    echo ""
+    echo "── WiFi ──"
+    iw dev "$WIFI" link 2>/dev/null
+    echo ""
+    echo "── Portas a escutar ──"
+    ss -tlnp 2>/dev/null
+    echo ""
+    echo "── Serviços com falha ──"
+    systemctl --failed 2>/dev/null
+    echo ""
+    echo "── Zram ──"
+    zramctl 2>/dev/null
+    echo ""
+    echo "── Firewall ──"
+    ufw status 2>/dev/null || echo "n/a"
+    echo ""
+    echo "── Análise de boot ──"
+    systemd-analyze 2>/dev/null
+    systemd-analyze blame 2>/dev/null | head -10
+    echo ""
+    echo "── SMART ──"
+    pkexec smartctl -H "$DISK" 2>/dev/null
+    pkexec smartctl -A "$DISK" 2>/dev/null | head -45
+    echo ""
+    echo "═ FIM ═"
+  } > "$out"
+
+  echo -e "${GREEN}✔ Diagnóstico exportado:${NC}"
+  echo -e "  ${BOLD}$out${NC}"
+  echo -e "  Tamanho: $(du -h "$out" | awk '{print $1}')"
+  read -p $'\nPrima Enter para voltar...'
+  menu
 }
 
 # ── START ────────────────────────────────────
