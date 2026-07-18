@@ -117,69 +117,79 @@ def header():
 # ── Tab 1: Dashboard ─────────────────────────
 def dashboard():
     header()
-    # CPU
-    cpu = run("grep -m1 'model name' /proc/cpuinfo | cut -d: -f2").strip()[:50]
+    cpu = run("grep -m1 'model name' /proc/cpuinfo | cut -d: -f2").strip()[:45]
     cores = run("grep -c ^processor /proc/cpuinfo").strip()
     load = run("cat /proc/loadavg | cut -d' ' -f1-3").strip()
-
-    # Mem
-    mem = run("free -h | awk 'NR==2{print $3\"/\"$2}'").strip()
-    mem_pct = run("free | awk 'NR==2{printf \"%.0f\", $3/$2*100}'").strip()
-
-    # Disk
+    mem_t = run("free -h | awk 'NR==2{print $2}'").strip()
+    mem_u = run("free -h | awk 'NR==2{print $3}'").strip()
+    mem_p = run("free | awk 'NR==2{printf \"%.0f\", $3/$2*100}'").strip()
     disk_u = run("df -h / | awk 'NR==2{print $3}'").strip()
     disk_t = run("df -h / | awk 'NR==2{print $2}'").strip()
     disk_p = run("df -h / | awk 'NR==2{print $5}'").strip()
-
-    # Temp
     temp = run("sensors 2>/dev/null | grep -m1 'Package id 0' | awk '{print $4}' | tr -d '+' || echo '—'").strip()
     uptime = run("uptime -p | sed 's/up //'").strip()
-
-    # WiFi
+    boot = run("systemd-analyze 2>/dev/null | awk '/userspace/{print $NF}'").strip() or "—"
+    failed = run("systemctl --failed 2>/dev/null | grep -c 'loaded failed' || echo 0").strip()
     wifi_s = ""
     if WIFI:
         s = run(f"iw dev {WIFI} station dump 2>/dev/null | awk '/signal:/{{print $2}}'").strip()
         wifi_s = f"{s} dBm" if s else "—"
+    zram_s = run("zramctl 2>/dev/null | awk 'NR>1{print $4}'").strip() or "—"
+    proc = run("ps aux --no-headers 2>/dev/null | wc -l").strip()
 
-    # Services failed
-    failed = run("systemctl --failed 2>/dev/null | grep -c 'loaded failed' || echo 0").strip()
-    failed_s = f"{C['r']}{failed} falha(s){C['n']}" if failed!='0' else f"{C['g']}0{C['n']}"
+    def pct_bar(p):
+        try: p=int(float(p))
+        except: return ""
+        n = max(0, min(10, p//10))
+        c = C['g'] if p<50 else C['y'] if p<80 else C['r']
+        return f"{c}{'█'*n}{'░'*(10-n)}{C['n']}"
 
-    # Zram
-    zram_s = run("zramctl 2>/dev/null | awk 'NR>1{print $4}'").strip() or "Inativo"
+    def section(t):
+        return f"  {C['c']}▌{C['B']} {t}{C['n']}"
 
-    # Box drawing
-    def box(title, *lines):
-        w = 52
-        print(f"  ┌─ {C['B']}{title}{C['n']} {'─'*(w-len(title)-4)}┐")
-        for l in lines: print(f"  │ {l}{' '*(w-len(str(l))-2)}│")
-        print(f"  └{'─'*w}┘")
+    def label(k, v, c=C['n']):
+        return f"  {C['d']}{k}{C['n']} {c}{v}"
 
-    box("💻  SISTEMA",
-        f"  {C['d']}CPU   {C['n']}{cpu} ({cores} núcleos)",
-        f"  {C['d']}Load  {C['n']}{load}",
-        f"  {C['d']}Uptime{C['n']}  {uptime}")
-
-    box("📊  RECURSOS",
-        f"  {C['d']}RAM   {C['n']}{mem}  {barra(mem_pct)} {mem_pct}%",
-        f"  {C['d']}Disco {C['n']}{disk_u}/{disk_t}  {barra(disk_p.replace('%',''))} {disk_p}",
-        f"  {C['d']}Temp  {C['n']}{temp}")
-
-    boot_t = run("systemd-analyze 2>/dev/null | awk '/userspace/{print $NF}' | tr -d 's' || echo '—'").strip()
-    box("🌐  REDE  ·  💾  ARMAZENAMENTO",
-        f"  {C['d']}WiFi  {C['n']}{wifi_s or '—'}    {'  ' if WIFI else ''}{C['d']}Rede:{C['n']} {SSID or '—'}",
-        f"  {C['d']}Zram  {C['n']}{zram_s}     {C['d']}Swap:{C['n']} {run('swapon --show 2>/dev/null | wc -l').strip()} dispositivos",
-        f"  {C['d']}Svcs  {C['n']}{failed_s}                {C['d']}Boot:{C['n']} {boot_t}s")
-
-    print(f"\n  {C['d']}Pressiona 2 para ir às ações, 3 para ver output, 0 para sair{C['n']}\n")
+    print(f"{section('💻 SISTEMA')}")
+    print()
+    print(f"{label('CPU', f'{cpu}  ({cores} núcleos)')}")
+    print(f"{label('Load', load)}")
+    print(f"{label('Up', uptime)}")
+    print(f"{label('Proc', f'{proc} processos')}")
+    print(f"{label('Boot', boot)}")
+    print()
+    print(f"{section('📊 RECURSOS')}")
+    print()
+    m_c = C['g'] if int(mem_p or 0) < 50 else C['y'] if int(mem_p or 0) < 80 else C['r']
+    d_c = C['g'] if int(disk_p.replace('%','') or 0) < 70 else C['y'] if int(disk_p.replace('%','') or 0) < 90 else C['r']
+    print(f"{label('RAM ', f'{mem_u}/{mem_t}  {pct_bar(mem_p)} {m_c}{mem_p}%{C['n']}', m_c)}")
+    print(f"{label('DSK ', f'{disk_u}/{disk_t}  {pct_bar(disk_p)} {d_c}{disk_p}{C['n']}', d_c)}")
+    if temp and temp != '—':
+        t_val = float(temp.replace("°C","").strip())
+        t_c = C['y'] if t_val > 60 else C['n']
+        print(f"{label('Temp', f'{temp}  {pct_bar(str(t_val))}', t_c)}")
+    else:
+        print(f"{label('Temp', '—')}")
+    print()
+    print(f"{section('🌐 REDE')}")
+    print()
+    print(f"{label('WiFi', wifi_s or '—')}")
+    print(f"{label('Rede', SSID or '—')}")
+    print()
+    print(f"{section('💾 ARMAZENAMENTO')}")
+    print()
+    print(f"{label('Zram', zram_s)}")
+    swp = run("swapon --show 2>/dev/null | wc -l").strip()
+    print(f"{label('Swap', f'{swp} dispositivos')}")
+    svc_c = C['g'] if failed=='0' else C['r']
+    svc_icon = "✅" if failed == "0" else "❌"
+    print(f"{label('Svcs', f'{svc_icon} {failed} falha(s)', svc_c)}")
+    print()
+    print(f"  {'─'*50}")
+    print(f"  {C['d']}[1] Dash  [2] Ações  [3] Output  [0] Sair{C['n']}")
     navegar()
 
-def barra(p):
-    try: p=int(float(p))
-    except: return ""
-    n = p//10
-    c = C['g'] if p<50 else C['y'] if p<80 else C['r']
-    return f"{c}{'█'*n}{'░'*(10-n)}{C['n']}"
+
 
 # ── Tab 2: Ações ─────────────────────────────
 def acoes():
