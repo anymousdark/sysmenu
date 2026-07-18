@@ -98,6 +98,18 @@ def run(cmd: str, as_root: bool = False, timeout: int = 120) -> str:
     except:
         return ""
 
+def run_live(cmd: str, as_root: bool = False):
+    """Run command showing real-time output (for updates, long tasks)"""
+    if as_root and os.geteuid() != 0:
+        cmd = f"sudo sh -c '{cmd}'"
+    try:
+        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in proc.stdout:
+            print(f"  {line}", end='', flush=True)
+        proc.wait()
+    except:
+        pass
+
 def pick(options: list, title: str = "") -> Optional[str]:
     """Simple picker with stdin input"""
     print(f"\n  {title}" if title else "")
@@ -398,24 +410,26 @@ def module_manutencao():
             ('fix', "Corrigir pacotes quebrados"),
         ], "Operações")
         if opt == 'up':
-            print(f"  {C['y']}A atualizar...{C['n']}")
-            cmd_update()
-            print(f"  {C['g']}✅ Concluído{C['n']}")
+            print(f"\n  {C['y']}A atualizar...{C['n']}\n")
+            run_live(f"{DISTRO.pkg_update} && {DISTRO.pkg_upgrade}", as_root=True)
+            print(f"\n  {C['g']}✅ Concluído{C['n']}")
         elif opt == 'clean':
-            cmd_clean()
-            print(f"  {C['g']}✅ Limpeza concluída{C['n']}")
+            print(f"\n  {C['y']}A limpar...{C['n']}\n")
+            run_live(DISTRO.pkg_clean, as_root=True)
+            print(f"\n  {C['g']}✅ Limpeza concluída{C['n']}")
         elif opt == 'journal':
-            run("journalctl --vacuum-size=100M", as_root=True)
-            print(f"  {C['g']}✅ Logs limpos (100MB){C['n']}")
+            print(f"\n  {C['y']}A limpar logs...{C['n']}\n")
+            run_live("journalctl --vacuum-size=100M 2>&1", as_root=True)
+            print(f"\n  {C['g']}✅ Logs limpos (100MB){C['n']}")
         elif opt == 'trim':
-            run("fstrim -v / 2>/dev/null", as_root=True)
-            print(f"  {C['g']}✅ TRIM executado{C['n']}")
+            print(f"\n  {C['y']}A executar TRIM...{C['n']}\n")
+            run_live("fstrim -v / 2>&1", as_root=True)
+            print(f"\n  {C['g']}✅ TRIM executado{C['n']}")
         elif opt == 'fix':
-            if DISTRO.pkg == 'apt-get':
-                run("apt-get install --fix-broken -y", as_root=True)
-            elif DISTRO.pkg == 'dnf':
-                run("dnf check --fix", as_root=True)
-            print(f"  {C['g']}✅ Corrigido{C['n']}")
+            fix_cmd = "apt-get install --fix-broken -y" if DISTRO.pkg == 'apt-get' else "dnf check --fix"
+            print(f"\n  {C['y']}A corrigir...{C['n']}\n")
+            run_live(fix_cmd, as_root=True)
+            print(f"\n  {C['g']}✅ Corrigido{C['n']}")
         else:
             break
         time.sleep(1.5)
@@ -432,23 +446,24 @@ def module_limpeza():
             ('trash', "Esvaziar lixeira"),
         ], "Operações")
         if opt == 'kernels':
+            print(f"\n  {C['y']}A remover kernels antigos...{C['n']}\n")
             cmd_kernels_cleanup()
-            print(f"  {C['g']}✅ Removidos{C['n']}")
+            print(f"\n  {C['g']}✅ Removidos{C['n']}")
         elif opt == 'tmp':
             run("rm -rf /tmp/* /var/tmp/* 2>/dev/null", as_root=True)
-            print(f"  {C['g']}✅ Limpos{C['n']}")
+            print(f"\n  {C['g']}✅ Limpos{C['n']}")
         elif opt == 'cache':
-            run(f"{DISTRO.pkg_clean.split('&&')[0]} clean 2>/dev/null", as_root=True)
-            print(f"  {C['g']}✅ Cache limpo{C['n']}")
+            run_live(f"{DISTRO.pkg_clean.split('&&')[0]} clean", as_root=True)
+            print(f"\n  {C['g']}✅ Cache limpo{C['n']}")
         elif opt == 'homecache':
             run(f"rm -rf {USER_HOME}/.cache/* 2>/dev/null")
-            print(f"  {C['g']}✅ ~/.cache limpo{C['n']}")
+            print(f"\n  {C['g']}✅ ~/.cache limpo{C['n']}")
         elif opt == 'logs':
-            run("journalctl --vacuum-time=7d", as_root=True)
-            print(f"  {C['g']}✅ Logs >7d removidos{C['n']}")
+            run_live("journalctl --vacuum-time=7d", as_root=True)
+            print(f"\n  {C['g']}✅ Logs >7d removidos{C['n']}")
         elif opt == 'trash':
             run(f"rm -rf {USER_HOME}/.local/share/Trash/* 2>/dev/null")
-            print(f"  {C['g']}✅ Lixeira vazia{C['n']}")
+            print(f"\n  {C['g']}✅ Lixeira vazia{C['n']}")
         else:
             break
         time.sleep(1.5)
