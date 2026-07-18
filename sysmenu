@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+
+# ──────────────────────────────────────────────
+#   🛠  SYS MENU — v1.0
+#   Diagnóstico + otimização do sistema
+#   Uso: ./sysmenu     ou     bash sysmenu
+# ──────────────────────────────────────────────
+
+RED='\033[1;31m'; GREEN='\033[1;32m'; YELLOW='\033[1;33m'
+BLUE='\033[1;34m'; CYAN='\033[1;36m'; NC='\033[0m'; BOLD='\033[1m'
+WIFI=$(iw dev 2>/dev/null | awk '/Interface/{print $2}')
+SSID=$(nmcli -t -f NAME con show --active 2>/dev/null | head -1)
+DISK="/dev/sda"
+[ ! -b "$DISK" ] && DISK="/dev/$(lsblk -ndo NAME 2>/dev/null | head -1)"
+
+header() {
+  clear
+  echo -e "${CYAN}┌──────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}          ${BOLD}🛠  SYS MENU${NC}                       ${CYAN}│${NC}"
+  echo -e "${CYAN}└──────────────────────────────────────────────┘${NC}"
+  echo ""
+}
+
+menu() {
+  header
+  echo -e "${BOLD}Escolha uma opção:${NC}\n"
+  echo -e "  ${GREEN}1${NC}) 🔍  Diagnóstico completo"
+  echo -e "  ${GREEN}2${NC}) 📶  WiFi - diagnóstico e otimização"
+  echo -e "  ${GREEN}3${NC}) 💾  Zram - status e ativação"
+  echo -e "  ${GREEN}4${NC}) 🛠   Serviços com falha"
+  echo -e "  ${GREEN}5${NC}) 💽  Saúde do disco (SMART)"
+  echo -e "  ${GREEN}6${NC}) 🌡  Temperaturas"
+  echo -e "  ${GREEN}7${NC}) 📊  Memória e CPU"
+  echo -e "  ${GREEN}8${NC}) 📝  Logs do sistema"
+  echo -e "  ${GREEN}0${NC}) ❌  Sair\n"
+  read -p "Opção: " opt
+  case $opt in
+    1) diag_completo ;;
+    2) wifi_menu ;;
+    3) zram_menu ;;
+    4) servicos_falha ;;
+    5) disk_smart  ;;
+    6) temperaturas ;;
+    7) mem_cpu      ;;
+    8) logs_sistema ;;
+    0) echo -e "${GREEN}Bye!${NC}"; exit 0 ;;
+    *) echo -e "${RED}Opção inválida!${NC}"; sleep 1; menu ;;
+  esac
+}
+
+# ── 1 ────────────────────────────────────────
+diag_completo() {
+  header
+  echo -e "${BOLD}🔍 DIAGNÓSTICO COMPLETO${NC}\n"
+
+  echo -e "${YELLOW}── Sistema ──${NC}"
+  printf "  Hostname : %s\n" "$(hostname)"
+  printf "  Kernel   : %s\n" "$(uname -r)"
+  printf "  Uptime   : %s\n" "$(uptime -p | sed 's/up //')"
+  printf "  Load     : %s\n" "$(cat /proc/loadavg | cut -d' ' -f1-3)"
+  echo ""
+
+  echo -e "${YELLOW}── Memória ──${NC}"
+  free -h | awk 'NR==1{printf "  %-8s %8s %8s %8s\n",$1,$2,$3,$4} NR==2{printf "  %-8s %8s %8s %8s\n",$1,$2,$3,$4}'
+  echo ""
+
+  echo -e "${YELLOW}── Disco ──${NC}"
+  df -h / | awk 'NR==2{printf "  %s — %s de %s usados (%s livres)\n",$1,$3,$2,$4}'
+  echo ""
+
+  echo -e "${YELLOW}── Temperaturas ──${NC}"
+  sensors 2>/dev/null | grep -E "Core|Package|temp1|Composite" | head -5 | sed 's/^/  /'
+  echo ""
+
+  echo -e "${YELLOW}── WiFi ──${NC}"
+  if [ -n "$WIFI" ]; then
+    iw dev "$WIFI" link 2>/dev/null | sed 's/^/  /'
+    iw dev "$WIFI" station dump 2>/dev/null | awk '/signal:/{printf "  Sinal : %s %s\n",$2,$3}'
+    echo "  DNS   : $(nmcli -t -f IP4.DNS con show "$SSID" 2>/dev/null | tr '\n' ' ')"
+  else
+    echo "  (sem interface WiFi)"
+  fi
+
+  echo -e "\n${YELLOW}── Zram ──${NC}"
+  if zramctl 2>/dev/null | grep -q zram; then
+    zramctl | awk 'NR>1{printf "  %s — %s, compressão %s\n",$1,$4,$2}'
+  else
+    echo "  Inativo"
+  fi
+
+  echo -e "\n${YELLOW}── Serviços com falha ──${NC}"
+  if systemctl --failed 2>/dev/null | grep -q "failed"; then
+    systemctl --failed 2>/dev/null | grep "loaded failed" | sed 's/^/  /'
+  else
+    echo "  Nenhum"
+  fi
+  echo ""
+  read -p "Prima Enter para voltar..."
+  menu
+}
+
+# ── 2 ────────────────────────────────────────
+wifi_menu() {
+  while true; do
+    header
+    echo -e "${BOLD}📶 WiFi${NC}\n"
+    [ -z "$WIFI" ] && { echo -e "${RED}Sem interface WiFi${NC}"; read -p "Enter..."; menu; return; }
+
+    echo -e "${YELLOW}── Conexão ──${NC}"
+    iw dev "$WIFI" link 2>/dev/null | sed 's/^/  /'
+    echo ""
+    iw dev "$WIFI" station dump 2>/dev/null | awk '
+      /signal:/{printf "  Sinal      : %s dBm\n",$2}
+      /tx bitrate/{printf "  TX bitrate : %s %s\n",$3,$4}
+      /rx bitrate/{printf "  RX bitrate : %s %s\n",$3,$4}
+      /tx retries/{printf "  TX retries : %s\n",$3}
+      /connected time/{printf "  Conectado  : %ss\n",$3}
+    '
+    echo ""
+    echo -e "${YELLOW}── Redes por perto ──${NC}"
+    nmcli dev wifi list 2>/dev/null | head -12 | sed 's/^/  /'
+
+    echo -e "\n${BOLD}Opções:${NC}"
+    echo "  1) DNS → Cloudflare/Google"
+    echo "  2) Desligar power saving"
+    echo "  3) Escanear redes"
+    echo "  0) Voltar"
+    read -p $'\nOpção: ' w
+    case $w in
+      1) nmcli con mod "$SSID" ipv4.dns "1.1.1.1 8.8.8.8"
+         nmcli con down "$SSID" 2>/dev/null && nmcli con up "$SSID" 2>/dev/null
+         echo -e "${GREEN}DNS alterado ✓${NC}" ;;
+      2) pkexec iw dev "$WIFI" set power_save off 2>/dev/null
+         echo -e "${GREEN}Power saving desligado ✓${NC}" ;;
+      3) nmcli dev wifi rescan && echo -e "${GREEN}Scan concluído ✓${NC}" ;;
+      0) return ;;
+    esac
+    read -p "Enter..."
+  done
+}
+
+# ── 3 ────────────────────────────────────────
+zram_menu() {
+  header
+  echo -e "${BOLD}💾 Zram${NC}\n"
+  if zramctl 2>/dev/null | grep -q zram; then
+    echo -e "${GREEN}✅ Ativo${NC}"
+    zramctl | sed 's/^/  /'
+    echo ""
+    swapon --show 2>/dev/null | sed 's/^/  /'
+  else
+    echo -e "${RED}❌ Inativo${NC}"
+    read -p $'\nAtivar agora? (s/N): ' a
+    [[ "$a" =~ ^[Ss]$ ]] && pkexec systemctl start dev-zram0.swap 2>/dev/null && \
+      { echo -e "${GREEN}Ativado!${NC}"; zramctl | sed 's/^/  /'; } || \
+      echo -e "${RED}Falha — systemd-zram-generator instalado?${NC}"
+  fi
+  read -p $'\nEnter...'; menu
+}
+
+# ── 4 ────────────────────────────────────────
+servicos_falha() {
+  header
+  echo -e "${BOLD}🛠  Serviços com falha${NC}\n"
+  if systemctl --failed 2>/dev/null | grep -q "failed"; then
+    systemctl --failed 2>/dev/null
+    read -p $'\nDesativar o serviço com falha? (s/N): ' a
+    if [[ "$a" =~ ^[Ss]$ ]]; then
+      UNIT=$(systemctl --failed 2>/dev/null | awk '/loaded failed/{print $1}')
+      [ -n "$UNIT" ] && pkexec systemctl disable --now "$UNIT" 2>/dev/null && \
+        echo -e "${GREEN}$UNIT desativado ✓${NC}"
+    fi
+  else
+    echo -e "${GREEN}Nenhum${NC}"
+  fi
+  read -p $'\nEnter...'; menu
+}
+
+# ── 5 ────────────────────────────────────────
+disk_smart() {
+  header
+  echo -e "${BOLD}💽 Disco${NC}\n"
+  MODEL=$(pkexec smartctl -i "$DISK" 2>/dev/null | grep "Device Model" | cut -d: -f2 | xargs)
+  HEALTH=$(pkexec smartctl -H "$DISK" 2>/dev/null | grep "SMART overall-health" | cut -d: -f2 | xargs)
+  TEMP=$(pkexec smartctl -A "$DISK" 2>/dev/null | awk '/Temperature_Celsius/{print $10}')
+  echo -e "  Modelo      : ${BOLD}$MODEL${NC}"
+  echo -e "  Saúde       : $(echo "$HEALTH" | sed 's/PASSED/✅ PASSED/; s/FAILED/❌ FAILED/')"
+  echo -e "  Temperatura : ${TEMP:-N/A}°C"
+  echo -e "  SMART       :"
+  pkexec smartctl -A "$DISK" 2>/dev/null | sed -n '8,25p' | sed 's/^/  /'
+  read -p $'\nExecutar teste short? (s/N): ' a
+  [[ "$a" =~ ^[Ss]$ ]] && pkexec smartctl -t short "$DISK" 2>/dev/null && \
+    echo -e "${GREEN}Teste iniciado! smartctl -l selftest $DISK p/ ver resultado${NC}"
+  read -p $'\nEnter...'; menu
+}
+
+# ── 6 ────────────────────────────────────────
+temperaturas() {
+  header
+  echo -e "${BOLD}🌡  Temperaturas${NC}\n"
+  sensors 2>/dev/null | sed 's/^/  /'
+  [ $? -ne 0 ] && echo -e "${RED}lm-sensors não instalado${NC}"
+  read -p $'\nEnter...'; menu
+}
+
+# ── 7 ────────────────────────────────────────
+mem_cpu() {
+  header
+  echo -e "${BOLD}📊 Memória e CPU${NC}\n"
+  echo -e "${YELLOW}── Memória ──${NC}"
+  free -h | sed 's/^/  /'
+  echo -e "\n${YELLOW}── Uptime ──${NC}"
+  echo "  $(uptime)"
+  echo -e "\n${YELLOW}── Top CPU ──${NC}"
+  ps aux --sort=-%cpu 2>/dev/null | head -6 | sed 's/^/  /'
+  echo -e "\n${YELLOW}── Top RAM ──${NC}"
+  ps aux --sort=-%mem 2>/dev/null | head -6 | sed 's/^/  /'
+  read -p $'\nEnter...'; menu
+}
+
+# ── 8 ────────────────────────────────────────
+logs_sistema() {
+  header
+  echo -e "${BOLD}📝 Logs — últimos erros do boot${NC}\n"
+  journalctl -p 3 -b 0 --no-pager -n 40 2>/dev/null | sed 's/^/  /'
+  [ $? -ne 0 ] && echo -e "${RED}Sem acesso aos logs (tente com pkexec)${NC}"
+  read -p $'\nEnter...'; menu
+}
+
+# ── START ────────────────────────────────────
+[ "$(id -u)" -eq 0 ] && { echo -e "${RED}Não execute como root. O script pede permissão quando necessário.${NC}"; exit 1; }
+while true; do menu; done
